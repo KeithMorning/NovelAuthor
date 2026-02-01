@@ -98,10 +98,37 @@ python main.py create --title "江湖往事" --genre "武侠" --style "金庸"
 python main.py outline --id novel_001 --theme "复仇与救赎"
 ```
 
-#### 写作章节 (Phase 3功能)
+#### 写作章节
 
 ```bash
 python main.py write --id novel_001 --chapter 1
+```
+
+#### 润色章节 (Phase 3功能)
+
+```bash
+# 全面润色
+python main.py polish --id novel_001 --chapter 1
+
+# 重点润色特定方面
+python main.py polish --id novel_001 --chapter 1 --focus "对话,环境描写"
+```
+
+#### 评审章节 (Phase 3功能)
+
+```bash
+python main.py review --id novel_001 --chapter 1
+```
+
+#### 记忆管理 (Phase 3功能)
+
+```bash
+# 查看记忆统计
+python main.py memory-stats --id novel_001
+
+# 搜索记忆
+python main.py search-memory --id novel_001 --query "主角" --type characters
+python main.py search-memory --id novel_001 --query "决战" --type plots
 ```
 
 #### 列出所有小说
@@ -129,7 +156,11 @@ python main.py export --id novel_001 --output ./my_novel.md
 #### 交互式创作模式 (Phase 3功能)
 
 ```bash
-python main.py interactive
+# 启动交互式对话，修改指定小说
+python main.py interactive --id novel_001
+
+# 针对特定章节进行对话
+python main.py interactive --id novel_001 --chapter 1
 ```
 
 ## 开发计划
@@ -141,17 +172,17 @@ python main.py interactive
 - [x] Markdown文件读写工具
 - [x] CLI命令框架
 
-### Phase 2: 核心Agent开发 (进行中)
-- [ ] CoordinatorAgent完整实现
-- [ ] OutlineAgent实现
-- [ ] CharacterAgent实现
-- [ ] WriterAgent基础版本
+### Phase 2: 核心Agent开发 ✅
+- [x] CoordinatorAgent完整实现
+- [x] OutlineAgent实现
+- [x] CharacterAgent实现
+- [x] WriterAgent基础版本
 
-### Phase 3: 高级功能
-- [ ] EditorAgent实现
-- [ ] 记忆系统集成
-- [ ] 风格系统完善
-- [ ] 多轮对话修改功能
+### Phase 3: 高级功能 ✅
+- [x] EditorAgent实现
+- [x] 记忆系统集成
+- [x] 风格系统完善
+- [x] 多轮对话修改功能
 
 ### Phase 4: 优化和测试
 - [ ] 完整工作流测试
@@ -276,6 +307,6 @@ MIT License
 
 ---
 
-**当前版本**: v0.1.0 (Phase 1 - 基础框架)
+**当前版本**: v0.3.0 (Phase 3 - 高级功能完成)
 
-**最后更新**: 2026-01-27
+**最后更新**: 2026-01-30

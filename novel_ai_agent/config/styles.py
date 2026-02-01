@@ -135,6 +135,86 @@ WRITER_STYLES: Dict[str, WriterStyle] = {
 5. 对话自然生动
 6. 描写详略得当
 """
+    ),
+
+    "古龙": WriterStyle(
+        name="古龙",
+        description="武侠风格,简练有力,注重意境和悬念",
+        features=[
+            "简洁凝练的短句",
+            "强烈的画面感",
+            "悬念和反转",
+            "诗意化的环境描写",
+            "江湖侠客的孤独感"
+        ],
+        prompt_template="""你是一位模仿古龙风格的武侠作家。写作时要注意:
+1. 使用简短有力的句子,营造节奏感
+2. 多用"很"字开头的独立句
+3. 注重视觉画面和意境营造
+4. 设置悬念,制造戏剧性反转
+5. 描写孤独的侠客和江湖恩怨
+6. 对话精炼,富有禅意
+"""
+    ),
+
+    "J.K.罗琳": WriterStyle(
+        name="J.K.罗琳",
+        description="奇幻风格,丰富的想象力,温暖的情感",
+        features=[
+            "丰富的魔法世界观",
+            "温暖的人物关系",
+            "成长主题",
+            "细腻的环境描写",
+            "幽默感的运用"
+        ],
+        prompt_template="""你是一位模仿J.K.罗琳风格的奇幻作家。写作时要注意:
+1. 构建丰富的魔法世界细节
+2. 注重友情、勇气等正面情感
+3. 描写主角的成长历程
+4. 运用幽默和温情的笔触
+5. 塑造生动的配角形象
+6. 设置伏笔和谜题
+"""
+    ),
+
+    "雨果": WriterStyle(
+        name="雨果",
+        description="浪漫主义,宏大叙事,人道主义关怀",
+        features=[
+            "浪漫主义色彩",
+            "宏大的社会背景",
+            "人道主义思想",
+            "详尽的环境描写",
+            "戏剧化的情节"
+        ],
+        prompt_template="""你是一位模仿雨果风格的作家。写作时要注意:
+1. 采用浪漫主义的叙述方式
+2. 融入宏大的历史和社会背景
+3. 表达人道主义关怀
+4. 详细描写建筑、环境等
+5. 设置戏剧性的情节冲突
+6. 探讨善恶、正义等主题
+"""
+    ),
+
+    "海明威": WriterStyle(
+        name="海明威",
+        description="简洁硬朗,冰山理论,男性气概",
+        features=[
+            "简洁直接的语言",
+            "冰山理论(隐藏深意)",
+            "硬汉形象",
+            "行动多于心理",
+            "对话推动情节"
+        ],
+        prompt_template="""你是一位模仿海明威风格的作家。写作时要注意:
+1. 使用简洁直接的短句
+2. 多写行动,少写心理
+3. 塑造坚韧的硬汉形象
+4. 通过对话和行动推动情节
+5. 隐藏情感,留白让读者体会
+6. 展现勇气和尊严主题
+"""
     )
 }
 
@@ -166,3 +246,122 @@ def get_style_description(style_name: str) -> str:
     """获取风格描述"""
     style = get_style(style_name)
     return f"{style.name}: {style.description}"
+
+
+def get_style_features(style_name: str) -> List[str]:
+    """获取风格特征列表"""
+    style = get_style(style_name)
+    return style.features
+
+
+def create_mixed_style(
+    primary_style: str,
+    secondary_style: str,
+    mix_name: str = None
+) -> WriterStyle:
+    """
+    创建混合风格
+
+    Args:
+        primary_style: 主要风格名称
+        secondary_style: 次要风格名称
+        mix_name: 混合风格名称（可选）
+
+    Returns:
+        WriterStyle: 混合风格对象
+    """
+    style1 = get_style(primary_style)
+    style2 = get_style(secondary_style)
+
+    if mix_name is None:
+        mix_name = f"{primary_style}+{secondary_style}"
+
+    # 合并特征（前3个来自主要风格，后2个来自次要风格）
+    mixed_features = style1.features[:3] + style2.features[:2]
+
+    # 合并prompt模板
+    mixed_prompt = f"""你是一位融合{primary_style}和{secondary_style}风格的作家。
+
+主要风格({primary_style})特点:
+{style1.prompt_template}
+
+次要风格({secondary_style})元素:
+{style2.prompt_template}
+
+请在创作中以{primary_style}为主，适当融入{secondary_style}的元素。
+"""
+
+    return WriterStyle(
+        name=mix_name,
+        description=f"混合{style1.description}和{style2.description}",
+        features=mixed_features,
+        prompt_template=mixed_prompt
+    )
+
+
+def analyze_style_similarity(style1_name: str, style2_name: str) -> Dict:
+    """
+    分析两种风格的相似度
+
+    Args:
+        style1_name: 第一种风格名称
+        style2_name: 第二种风格名称
+
+    Returns:
+        Dict: 相似度分析结果
+    """
+    style1 = get_style(style1_name)
+    style2 = get_style(style2_name)
+
+    # 简单的特征重叠分析
+    features1 = set(style1.features)
+    features2 = set(style2.features)
+
+    common_features = features1.intersection(features2)
+    unique_to_1 = features1 - features2
+    unique_to_2 = features2 - features1
+
+    similarity = len(common_features) / max(len(features1), len(features2))
+
+    return {
+        "style1": style1_name,
+        "style2": style2_name,
+        "similarity_score": round(similarity, 2),
+        "common_features": list(common_features),
+        "unique_to_style1": list(unique_to_1),
+        "unique_to_style2": list(unique_to_2)
+    }
+
+
+def get_recommended_styles(genre: str) -> List[str]:
+    """
+    根据类型推荐合适的风格
+
+    Args:
+        genre: 小说类型
+
+    Returns:
+        List[str]: 推荐的风格名称列表
+    """
+    recommendations = {
+        "武侠": ["金庸", "古龙", "中性风格"],
+        "科幻": ["刘慈欣", "中性风格"],
+        "推理": ["东野圭吾", "中性风格"],
+        "悬疑": ["东野圭吾", "中性风格"],
+        "奇幻": ["J.K.罗琳", "中性风格"],
+        "魔幻": ["莫言", "雨果", "中性风格"],
+        "现代": ["村上春树", "海明威", "中性风格"],
+        "都市": ["村上春树", "中性风格"],
+        "历史": ["雨果", "中性风格"],
+        "军事": ["海明威", "中性风格"]
+    }
+
+    # 转换为小写进行匹配
+    genre_lower = genre.lower()
+
+    for key, styles in recommendations.items():
+        if key in genre or genre in key:
+            return styles
+
+    # 默认推荐
+    return ["中性风格"]

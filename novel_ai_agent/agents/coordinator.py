@@ -11,6 +11,7 @@ from .character_agent import CharacterAgent
 from .writer_agent import WriterAgent
 from ..models.novel import Novel
 from ..utils.file_manager import file_manager
+from ..memory import get_memory_manager
 
 
 class CoordinatorAgent(BaseAgent):
@@ -155,6 +156,10 @@ class CoordinatorAgent(BaseAgent):
             file_manager.save_outline_markdown(novel.outline, novel_id)
             file_manager.save_characters_markdown(novel.characters, novel_id)
 
+            # 5. 加载到记忆系统
+            memory_manager = get_memory_manager(novel_id)
+            memory_manager.load_novel_to_memory(novel)
+
             return {
                 "status": "success",
                 "novel_id": novel_id,
@@ -237,6 +242,10 @@ class CoordinatorAgent(BaseAgent):
             file_manager.save_novel_json(novel)
             file_manager.save_chapter_markdown(chapter, novel_id)
             file_manager.save_novel_markdown(novel)
+
+            # 6. 添加到记忆系统
+            memory_manager = get_memory_manager(novel_id)
+            memory_manager.add_chapter_to_memory(chapter)
 
             return {
                 "status": "success",
