@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket 测试客户端</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            border-bottom: 3px solid #4CAF50;
+            padding-bottom: 10px;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+        .status.connected {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .status.disconnected {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .controls {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+            margin: 20px 0;
+        }
+        button {
+            padding: 10px 20px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        input {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        .input-group {
+            margin: 10px 0;
+        }
+        .input-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #555;
+        }
+        #messages {
+            height: 400px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            padding: 10px;
+            background-color: #fafafa;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+        .message {
+            margin: 5px 0;
+            padding: 8px;
+            border-radius: 4px;
+            border-left: 3px solid #4CAF50;
+            background-color: white;
+        }
+        .message.sent {
+            border-left-color: #2196F3;
+            background-color: #e3f2fd;
+        }
+        .message.error {
+            border-left-color: #f44336;
+            background-color: #ffebee;
+        }
+        .message .time {
+            color: #999;
+            font-size: 10px;
+        }
+        .message .type {
+            font-weight: bold;
+            color: #4CAF50;
+        }
+        .stats {
+            background-color: #e8f5e9;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 20px 0;
+        }
+        .stats h3 {
+            margin-top: 0;
+            color: #2e7d32;
+        }
+        pre {
+            background-color: #f5f5f5;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔌 WebSocket 测试客户端</h1>
+
+        <div id="status" class="status disconnected">
+            未连接
+        </div>
+
+        <div class="input-group">
+            <label for="serverUrl">服务器地址:</label>
+            <input type="text" id="serverUrl" value="ws://localhost:8000/ws" />
+        </div>
+
+        <div class="controls">
+            <button id="connectBtn" onclick="connect()">连接</button>
+            <button id="disconnectBtn" onclick="disconnect()" disabled>断开</button>
+            <button onclick="sendPing()" disabled id="pingBtn">发送 Ping</button>
+            <button onclick="getStats()" disabled id="statsBtn">获取统计</button>
+        </div>
+
+        <div class="input-group">
+            <label for="novelId">小说 ID:</label>
+            <input type="text" id="novelId" placeholder="例如: novel_62c8c6f1" />
+        </div>
+
+        <div class="controls">
+            <button onclick="subscribe()" disabled id="subscribeBtn">订阅小说</button>
+            <button onclick="unsubscribe()" disabled id="unsubscribeBtn">取消订阅</button>
+            <button onclick="subscribeGlobal()" disabled id="globalSubBtn">订阅全局</button>
+            <button onclick="unsubscribeGlobal()" disabled id="globalUnsubBtn">取消全局订阅</button>
+        </div>
+
+        <h3>📨 消息日志</h3>
+        <div id="messages"></div>
+
+        <div class="stats">
+            <h3>📊 连接统计</h3>
+            <pre id="statsDisplay">点击"获取统计"按钮查看连接信息</pre>
+        </div>
+
+        <h3>📖 使用说明</h3>
+        <ul>
+            <li><strong>连接</strong>: 点击"连接"按钮建立 WebSocket 连接</li>
+            <li><strong>订阅小说</strong>: 输入小说ID后点击"订阅小说"，将接收该小说的实时更新</li>
+            <li><strong>订阅全局</strong>: 接收所有小说的更新消息</li>
+            <li><strong>Ping</strong>: 发送心跳检测，确认连接状态</li>
+            <li><strong>获取统计</strong>: 查看当前连接数和订阅信息</li>
+        </ul>
+
+        <h3>📝 消息格式示例</h3>
+        <pre>{
+  "type": "progress",
+  "novel_id": "novel_xxx",
+  "task_type": "create",
+  "progress": 50,
+  "message": "正在创建角色...",
+  "timestamp": "2026-02-02T12:00:00"
+}</pre>
+    </div>
+
+    <script>
+        let ws = null;
+        let clientId = null;
+
+        function addMessage(msg, type = 'received') {
+            const messagesDiv = document.getElementById('messages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${type}`;
+
+            const time = new Date().toLocaleTimeString();
+            const typeLabel = type === 'sent' ? '发送' : type === 'error' ? '错误' : '接收';
+
+            messageDiv.innerHTML = `
+                <span class="time">[${time}]</span>
+                <span class="type">${typeLabel}</span>:
+                <pre>${JSON.stringify(msg, null, 2)}</pre>
+            `;
+
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        function updateStatus(connected) {
+            const statusDiv = document.getElementById('status');
+            const connectBtn = document.getElementById('connectBtn');
+            const disconnectBtn = document.getElementById('disconnectBtn');
+            const actionButtons = [
+                'pingBtn', 'statsBtn', 'subscribeBtn',
+                'unsubscribeBtn', 'globalSubBtn', 'globalUnsubBtn'
+            ];
+
+            if (connected) {
+                statusDiv.textContent = `已连接 (Client ID: ${clientId})`;
+                statusDiv.className = 'status connected';
+                connectBtn.disabled = true;
+                disconnectBtn.disabled = false;
+                actionButtons.forEach(id => {
+                    document.getElementById(id).disabled = false;
+                });
+            } else {
+                statusDiv.textContent = '未连接';
+                statusDiv.className = 'status disconnected';
+                connectBtn.disabled = false;
+                disconnectBtn.disabled = true;
+                actionButtons.forEach(id => {
+                    document.getElementById(id).disabled = true;
+                });
+            }
+        }
+
+        function connect() {
+            const serverUrl = document.getElementById('serverUrl').value;
+            clientId = 'client_' + Math.random().toString(36).substr(2, 9);
+
+            ws = new WebSocket(serverUrl + '?client_id=' + clientId);
+
+            ws.onopen = function(event) {
+                console.log('WebSocket 连接已建立');
+                updateStatus(true);
+            };
+
+            ws.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                console.log('收到消息:', data);
+                addMessage(data, 'received');
+
+                // 特殊处理统计信息
+                if (data.type === 'stats') {
+                    document.getElementById('statsDisplay').textContent =
+                        JSON.stringify(data.data, null, 2);
+                }
+            };
+
+            ws.onerror = function(error) {
+                console.error('WebSocket 错误:', error);
+                addMessage({error: '连接错误'}, 'error');
+            };
+
+            ws.onclose = function(event) {
+                console.log('WebSocket 连接已关闭');
+                updateStatus(false);
+                addMessage({message: '连接已关闭'}, 'error');
+            };
+        }
+
+        function disconnect() {
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+        }
+
+        function sendMessage(message) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify(message));
+                addMessage(message, 'sent');
+            } else {
+                alert('WebSocket 未连接');
+            }
+        }
+
+        function sendPing() {
+            sendMessage({ type: 'ping' });
+        }
+
+        function getStats() {
+            sendMessage({ type: 'get_stats' });
+        }
+
+        function subscribe() {
+            const novelId = document.getElementById('novelId').value;
+            if (!novelId) {
+                alert('请输入小说 ID');
+                return;
+            }
+            sendMessage({
+                type: 'subscribe',
+                novel_id: novelId
+            });
+        }
+
+        function unsubscribe() {
+            const novelId = document.getElementById('novelId').value;
+            if (!novelId) {
+                alert('请输入小说 ID');
+                return;
+            }
+            sendMessage({
+                type: 'unsubscribe',
+                novel_id: novelId
+            });
+        }
+
+        function subscribeGlobal() {
+            sendMessage({ type: 'subscribe_global' });
+        }
+
+        function unsubscribeGlobal() {
+            sendMessage({ type: 'unsubscribe_global' });
+        }
+
+        // 页面加载时自动连接（可选）
+        // window.onload = connect;
+    </script>
+</body>
+</html>

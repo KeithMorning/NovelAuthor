@@ -167,10 +167,9 @@ class VectorMemoryStore:
         for plot in plot_points:
             content = f"""
 情节点: {plot.get('name', '')}
-类型: {plot.get('type', '')}
 描述: {plot.get('description', '')}
-章节位置: 第{plot.get('chapter', '')}章
-涉及角色: {', '.join(plot.get('characters_involved', []))}
+章节位置: {plot.get('chapter_range', '未指定')}
+重要性: {plot.get('importance', '中')}
             """.strip()
 
             doc = Document(
@@ -179,7 +178,7 @@ class VectorMemoryStore:
                     "novel_id": novel_id,
                     "type": "plot",
                     "name": plot.get('name', ''),
-                    "chapter": plot.get('chapter', 0)
+                    "chapter_range": plot.get('chapter_range', '')
                 }
             )
             documents.append(doc)

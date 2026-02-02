@@ -69,10 +69,9 @@ class MemoryManager:
             plot_data = [
                 {
                     "name": pp.name,
-                    "type": pp.type,
                     "description": pp.description,
-                    "chapter": pp.chapter_number,
-                    "characters_involved": pp.characters_involved
+                    "chapter_range": pp.chapter_range,
+                    "importance": pp.importance
                 }
                 for pp in novel.outline.plot_points
             ]
