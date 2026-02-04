@@ -6,7 +6,19 @@
       "Bash(python3:*)",
       "Bash(pip install:*)",
       "Bash(pip3 install:*)",
-      "Bash(chmod:*)"
+      "Bash(chmod:*)",
+      "Bash(npm install @chakra-ui/react @emotion/react @emotion/styled framer-motion)",
+      "Bash(npm install @tanstack/react-query axios react-router-dom)",
+      "Bash(npm install --save-dev @types/react-router-dom)",
+      "Bash(npm start)",
+      "Bash(grep:*)",
+      "Bash(npm install @chakra-ui/icons)",
+      "Bash(npm uninstall:*)",
+      "Bash(npm install @chakra-ui/react@^2.8.0 @chakra-ui/icons@^2.1.0 @emotion/react@^11 @emotion/styled@^11 framer-motion@^10)",
+      "Bash(npm install @chakra-ui/react@^2.8.0 @chakra-ui/icons@^2.1.0 @emotion/react@^11 @emotion/styled@^11 framer-motion@^10 --legacy-peer-deps)",
+      "Bash(npm install @monaco-editor/react)",
+      "Bash(npm install:*)",
+      "Bash(ls:*)"
     ]
   }
 }

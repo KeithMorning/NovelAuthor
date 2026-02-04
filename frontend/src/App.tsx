@@ -1,25 +1,40 @@
 import React from 'react';
-import logo from './logo.svg';
-import './App.css';
+import { ChakraProvider, Box } from '@chakra-ui/react';
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { WebSocketProvider } from './contexts/WebSocketContext';
+import { HomePage } from './pages/HomePage';
+import { NovelDetailPage } from './pages/NovelDetailPage';
+import { ChapterPage } from './pages/ChapterPage';
+import theme from './theme';
+
+// 创建 QueryClient 实例
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: false,
+      retry: 1,
+    },
+  },
+});
 
 function App() {
   return (
-    <div className="App">
-      <header className="App-header">
-        <img src={logo} className="App-logo" alt="logo" />
-        <p>
-          Edit <code>src/App.tsx</code> and save to reload.
-        </p>
-        <a
-          className="App-link"
-          href="https://reactjs.org"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Learn React
-        </a>
-      </header>
-    </div>
+    <QueryClientProvider client={queryClient}>
+      <ChakraProvider theme={theme}>
+        <WebSocketProvider>
+          <Router>
+            <Box minH="100vh" bg="gray.50" _dark={{ bg: 'gray.900' }}>
+              <Routes>
+                <Route path="/" element={<HomePage />} />
+                <Route path="/novel/:id" element={<NovelDetailPage />} />
+                <Route path="/novel/:novelId/chapter/:chapterNumber" element={<ChapterPage />} />
+              </Routes>
+            </Box>
+          </Router>
+        </WebSocketProvider>
+      </ChakraProvider>
+    </QueryClientProvider>
   );
 }
 
