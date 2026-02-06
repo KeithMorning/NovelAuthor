@@ -13,6 +13,7 @@ from ..prompts.character_prompts import (
     get_character_generation_prompt,
     get_character_refinement_prompt
 )
+from ..utils.yaml_parser import extract_yaml_from_response
 
 
 class CharacterAgent(BaseAgent):
@@ -92,12 +93,12 @@ class CharacterAgent(BaseAgent):
             response = await self.llm.ainvoke(messages)
             content = response.content
 
-            # 解析JSON响应
-            characters_data = self._extract_json_from_response(content)
+            # 解析YAML响应
+            characters_data = extract_yaml_from_response(content, "debug_character_generation")
 
             # 如果返回的不是列表，尝试找到列表
             if isinstance(characters_data, dict):
-                # 可能返回的是 {"characters": [...]}
+                # 可能返回的是 {"characters": [...]} 或 {characters: [...]}
                 if "characters" in characters_data:
                     characters_data = characters_data["characters"]
                 else:
@@ -162,8 +163,8 @@ class CharacterAgent(BaseAgent):
             response = await self.llm.ainvoke(messages)
             content = response.content
 
-            # 解析JSON响应
-            character_data = self._extract_json_from_response(content)
+            # 解析YAML响应
+            character_data = extract_yaml_from_response(content, "debug_character_refinement")
 
             # 构建新的Character对象
             refined_character = Character(**character_data)
@@ -208,46 +209,6 @@ class CharacterAgent(BaseAgent):
                     key_points.append(f"  涉及角色: {', '.join(cp.characters_involved)}")
 
         return "\n".join(key_points)
-
-    def _extract_json_from_response(self, response: str) -> Any:
-        """
-        从LLM响应中提取JSON
-
-        Args:
-            response: LLM的响应文本
-
-        Returns:
-            Any: 解析后的JSON对象（可能是dict或list）
-        """
-        # 尝试找到JSON代码块
-        if "```json" in response:
-            start = response.find("```json") + 7
-            end = response.find("```", start)
-            json_str = response[start:end].strip()
-        elif "```" in response:
-            start = response.find("```") + 3
-            end = response.find("```", start)
-            json_str = response[start:end].strip()
-        else:
-            # 假设整个响应就是JSON
-            json_str = response.strip()
-
-        try:
-            return json.loads(json_str)
-        except json.JSONDecodeError as e:
-            # 如果解析失败，尝试找到第一个[或{到最后一个]或}
-            if '[' in json_str:
-                start_idx = json_str.find('[')
-                end_idx = json_str.rfind(']')
-            else:
-                start_idx = json_str.find('{')
-                end_idx = json_str.rfind('}')
-
-            if start_idx != -1 and end_idx != -1:
-                json_str = json_str[start_idx:end_idx+1]
-                return json.loads(json_str)
-            else:
-                raise ValueError(f"无法从响应中提取有效的JSON: {e}")
 
     def get_characters_summary(self, characters: List[Character]) -> str:
         """

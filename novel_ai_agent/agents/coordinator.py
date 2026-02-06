@@ -12,6 +12,7 @@ from .writer_agent import WriterAgent
 from ..models.novel import Novel
 from ..utils.file_manager import file_manager
 from ..memory import get_memory_manager
+from ..utils.logger import get_logger, WorkflowStep, NovelCreationLogger
 
 
 class CoordinatorAgent(BaseAgent):
@@ -97,7 +98,8 @@ class CoordinatorAgent(BaseAgent):
         theme: str,
         style: str = "中性风格",
         chapter_count: int = 20,
-        user_requirements: str = ""
+        user_requirements: str = "",
+        novel_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         完整的小说创建工作流
@@ -109,13 +111,25 @@ class CoordinatorAgent(BaseAgent):
             style: 作家风格
             chapter_count: 章节数
             user_requirements: 用户需求
+            novel_id: 可选的小说ID，如果未提供则自动生成
 
         Returns:
             Dict: 包含novel_id和创建状态
         """
+        # 生成novel_id（用于日志）
+        if not novel_id:
+            novel_id = f"novel_{uuid.uuid4().hex[:8]}"
+
+        # 创建日志记录器
+        logger = get_logger(novel_id)
+
         try:
             # 1. 创建小说对象
-            novel_id = f"novel_{uuid.uuid4().hex[:8]}"
+            logger.step_start(
+                WorkflowStep.INIT,
+                f"创建小说对象: {title} ({genre})"
+            )
+
             novel = Novel(
                 id=novel_id,
                 title=title,
@@ -123,7 +137,24 @@ class CoordinatorAgent(BaseAgent):
                 author_style=style
             )
 
+            logger.step_success(
+                WorkflowStep.INIT,
+                "小说对象创建成功",
+                details={
+                    "novel_id": novel_id,
+                    "title": title,
+                    "genre": genre,
+                    "style": style,
+                    "chapter_count": chapter_count
+                }
+            )
+
             # 2. 生成大纲
+            logger.step_start(
+                WorkflowStep.OUTLINE_GENERATION,
+                f"开始生成大纲，目标章节数: {chapter_count}"
+            )
+
             self.outline_agent = OutlineAgent()
             outline_result = await self.outline_agent.generate_outline(
                 title=title,
@@ -134,31 +165,94 @@ class CoordinatorAgent(BaseAgent):
             )
 
             if outline_result["status"] != "success":
+                logger.step_error(
+                    WorkflowStep.OUTLINE_GENERATION,
+                    "大纲生成失败",
+                    Exception(outline_result.get("message", "Unknown error")),
+                    details=outline_result
+                )
                 return outline_result
 
             novel.outline = outline_result["outline"]
 
+            logger.step_success(
+                WorkflowStep.OUTLINE_GENERATION,
+                f"大纲生成成功，包含 {len(novel.outline.chapters_plan)} 章",
+                details={
+                    "chapter_count": len(novel.outline.chapters_plan),
+                    "plot_points": len(novel.outline.plot_points)
+                }
+            )
+
             # 3. 生成角色
+            logger.step_start(
+                WorkflowStep.CHARACTER_GENERATION,
+                "开始生成角色"
+            )
+
             self.character_agent = CharacterAgent()
             char_result = await self.character_agent.generate_characters(
                 outline=novel.outline
             )
 
             if char_result["status"] != "success":
+                logger.step_error(
+                    WorkflowStep.CHARACTER_GENERATION,
+                    "角色生成失败",
+                    Exception(char_result.get("message", "Unknown error")),
+                    details=char_result
+                )
                 return char_result
 
             for character in char_result["characters"]:
                 novel.add_character(character)
 
+            logger.step_success(
+                WorkflowStep.CHARACTER_GENERATION,
+                f"角色生成成功，创建了 {len(novel.characters)} 个角色",
+                details={
+                    "character_count": len(novel.characters),
+                    "characters": [char.name for char in novel.characters]
+                }
+            )
+
             # 4. 保存小说
+            logger.step_start(
+                WorkflowStep.FILE_SAVING,
+                "保存小说文件"
+            )
+
             self.current_novel = novel
             file_manager.save_novel_json(novel)
             file_manager.save_outline_markdown(novel.outline, novel_id)
             file_manager.save_characters_markdown(novel.characters, novel_id)
 
+            logger.step_success(
+                WorkflowStep.FILE_SAVING,
+                "小说文件保存成功",
+                details={
+                    "files": ["novel.json", "outline.md", "characters.md"]
+                }
+            )
+
             # 5. 加载到记忆系统
+            logger.step_start(
+                WorkflowStep.MEMORY_LOADING,
+                "加载到记忆系统"
+            )
+
             memory_manager = get_memory_manager(novel_id)
             memory_manager.load_novel_to_memory(novel)
+
+            logger.step_success(
+                WorkflowStep.MEMORY_LOADING,
+                "记忆系统加载成功"
+            )
+
+            # 完成
+            logger.complete(
+                f"小说 '{title}' 创建成功！包含 {len(novel.outline.chapters_plan)} 章大纲和 {len(novel.characters)} 个角色"
+            )
 
             return {
                 "status": "success",
@@ -168,10 +262,18 @@ class CoordinatorAgent(BaseAgent):
             }
 
         except Exception as e:
+            logger.step_error(
+                logger.workflow_status.get("current_step", WorkflowStep.INIT),
+                f"创建小说时出错: {str(e)}",
+                e,
+                details={"title": title, "genre": genre}
+            )
+
             return {
                 "status": "error",
                 "message": f"创建小说时出错: {str(e)}",
-                "error": str(e)
+                "error": str(e),
+                "novel_id": novel_id
             }
 
     async def write_chapter_workflow(

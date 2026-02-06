@@ -54,6 +54,11 @@ export const useWebSocket = (options: UseWebSocketOptions = {}) => {
         setIsConnected(false);
         wsRef.current = null;
 
+        // Clear ping interval
+        if ((ws as any).pingInterval) {
+          clearInterval((ws as any).pingInterval);
+        }
+
         // 自动重连
         if (reconnect && reconnectTimeoutRef.current === null) {
           reconnectTimeoutRef.current = setTimeout(() => {
@@ -62,6 +67,13 @@ export const useWebSocket = (options: UseWebSocketOptions = {}) => {
           }, reconnectInterval);
         }
       };
+
+      // Heartbeat
+      (ws as any).pingInterval = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'ping' }));
+        }
+      }, 30000);
 
       wsRef.current = ws;
     } catch (error) {

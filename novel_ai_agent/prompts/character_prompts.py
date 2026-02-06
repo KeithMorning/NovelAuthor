@@ -11,7 +11,7 @@ CHARACTER_SYSTEM_PROMPT = """你是一位专业的角色设计师，擅长创造
 4. 设计角色的发展弧线
 
 输出要求：
-- 使用JSON格式输出
+- 使用YAML格式输出（更适合多行文本，不需要转义引号）
 - 角色要有鲜明的个性特征
 - 角色动机要合理且能推动情节
 - 角色关系要清晰且有冲突张力
@@ -31,7 +31,7 @@ CHARACTER_GENERATION_PROMPT = """请根据以下小说信息创建角色设定�
 **角色需求**:
 {character_requirements}
 
-请创建以下角色（以JSON数组格式输出）：
+请创建以下角色（以YAML格式输出）：
 
 对于每个角色，需要包含：
 1. **基本信息**:
@@ -59,24 +59,24 @@ CHARACTER_GENERATION_PROMPT = """请根据以下小说信息创建角色设定�
 8. **发展弧线**:
    - arc: 角色在故事中的成长变化
 
-JSON格式示例：
-```json
-[
-  {{
-    "name": "角色名",
-    "role": "主角",
-    "personality": "性格描述...",
-    "background": "背景故事...",
-    "motivation": "动机...",
-    "appearance": "外貌...",
-    "skills": "技能...",
-    "relationships": {{
-      "角色2": "关系描述",
-      "角色3": "关系描述"
-    }},
-    "arc": "发展弧线..."
-  }}
-]
+YAML格式示例（YAML格式的优势：多行文本自然，不需要转义引号）：
+```yaml
+characters:
+  - name: 角色名
+    role: 主角
+    personality: |
+      性格描述，可以包含"引号"而不需要转义。
+      支持多行文本，更自然易读。
+    background: |
+      背景故事，可以自由使用标点符号。
+      不用担心引号或其他特殊字符。
+    motivation: 行动动机和目标
+    appearance: 外貌特征
+    skills: 特长、技能
+    relationships:
+      角色2: 关系描述
+      角色3: 关系描述
+    arc: 角色发展弧线
 ```
 
 请至少创建3-5个主要角色（根据故事需要）。

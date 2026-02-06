@@ -9,6 +9,7 @@ from .base_agent import BaseAgent
 from ..models.chapter import Chapter
 from ..models.character import Character
 from ..models.outline import Outline
+from ..utils.json_parser import extract_json_from_response
 from ..prompts.editor_prompts import (
     EDITOR_SYSTEM_PROMPT,
     get_polish_prompt,
@@ -171,7 +172,7 @@ class EditorAgent(BaseAgent):
             content = response.content
 
             # 解析JSON响应
-            result = self._extract_json_from_response(content)
+            result = extract_json_from_response(content, "debug_editor")
 
             return {
                 "status": "success",
@@ -228,7 +229,7 @@ class EditorAgent(BaseAgent):
             content = response.content
 
             # 解析JSON响应
-            result = self._extract_json_from_response(content)
+            result = extract_json_from_response(content, "debug_editor")
 
             return {
                 "status": "success",
@@ -295,7 +296,7 @@ class EditorAgent(BaseAgent):
             content = response.content
 
             # 解析JSON响应
-            result = self._extract_json_from_response(content)
+            result = extract_json_from_response(content, "debug_editor")
 
             return {
                 "status": "success",
@@ -399,33 +400,3 @@ class EditorAgent(BaseAgent):
             lines.append("")
 
         return "\n".join(lines)
-
-    def _extract_json_from_response(self, response: str) -> Dict:
-        """从LLM响应中提取JSON"""
-        # 尝试找到JSON代码块
-        if "```json" in response:
-            start = response.find("```json") + 7
-            end = response.find("```", start)
-            json_str = response[start:end].strip()
-        elif "```" in response:
-            start = response.find("```") + 3
-            end = response.find("```", start)
-            json_str = response[start:end].strip()
-        else:
-            # 假设整个响应就是JSON
-            json_str = response.strip()
-
-        # 清理可能的问题
-        json_str = json_str.replace('\ufeff', '').replace('\r\n', '\n')
-
-        try:
-            return json.loads(json_str)
-        except json.JSONDecodeError as e:
-            # 尝试找到第一个{到最后一个}
-            start_idx = json_str.find('{')
-            end_idx = json_str.rfind('}')
-            if start_idx != -1 and end_idx != -1:
-                json_str = json_str[start_idx:end_idx+1]
-                return json.loads(json_str)
-            else:
-                raise ValueError(f"无法从响应中提取有效的JSON: {e}")

@@ -16,7 +16,7 @@ export const novelsApi = {
   },
 
   // 创建新小说
-  create: async (data: CreateNovelRequest): Promise<{ success: boolean; message: string }> => {
+  create: async (data: CreateNovelRequest): Promise<{ success: boolean; message: string; data?: { novel_id: string } }> => {
     const response = await apiClient.post('/api/novels/', data);
     return response.data;
   },

@@ -7,6 +7,7 @@ from typing import Dict, Any, Optional
 from langchain_core.messages import HumanMessage, SystemMessage
 from .base_agent import BaseAgent
 from ..models.outline import Outline, PlotPoint, ChapterPlan
+from ..utils.json_parser import extract_json_from_response
 from ..prompts.outline_prompts import (
     OUTLINE_SYSTEM_PROMPT,
     get_outline_generation_prompt,
@@ -97,7 +98,7 @@ class OutlineAgent(BaseAgent):
             content = response.content
 
             # 解析JSON响应
-            outline_data = self._extract_json_from_response(content)
+            outline_data = extract_json_from_response(content, "debug_outline")
 
             # 构建Outline对象
             outline = self._build_outline_from_data(
@@ -155,7 +156,7 @@ class OutlineAgent(BaseAgent):
             content = response.content
 
             # 解析JSON响应
-            outline_data = self._extract_json_from_response(content)
+            outline_data = extract_json_from_response(content, "debug_outline")
 
             # 构建新的Outline对象，版本号+1
             outline = self._build_outline_from_data(
@@ -178,60 +179,6 @@ class OutlineAgent(BaseAgent):
                 "message": f"优化大纲时出错: {str(e)}",
                 "error": str(e)
             }
-
-    def _extract_json_from_response(self, response: str) -> Dict:
-        """
-        从LLM响应中提取JSON
-
-        Args:
-            response: LLM的响应文本
-
-        Returns:
-            Dict: 解析后的JSON对象
-        """
-        # 尝试找到JSON代码块
-        if "```json" in response:
-            start = response.find("```json") + 7
-            end = response.find("```", start)
-            json_str = response[start:end].strip()
-        elif "```" in response:
-            start = response.find("```") + 3
-            end = response.find("```", start)
-            json_str = response[start:end].strip()
-        else:
-            # 假设整个响应就是JSON
-            json_str = response.strip()
-
-        # 清理可能的BOM和其他特殊字符
-        json_str = json_str.replace('\ufeff', '').replace('\r\n', '\n')
-
-        # 移除可能的尾部逗号（JSON标准不允许）
-        import re
-        json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
-
-        try:
-            return json.loads(json_str)
-        except json.JSONDecodeError as e:
-            # 如果解析失败，尝试找到第一个{到最后一个}
-            start_idx = json_str.find('{')
-            end_idx = json_str.rfind('}')
-            if start_idx != -1 and end_idx != -1:
-                json_str_cleaned = json_str[start_idx:end_idx+1]
-                # 再次清理尾部逗号
-                json_str_cleaned = re.sub(r',(\s*[}\]])', r'\1', json_str_cleaned)
-                try:
-                    return json.loads(json_str_cleaned)
-                except json.JSONDecodeError:
-                    # 保存原始响应用于调试
-                    import os
-                    debug_file = os.path.join(os.getcwd(), "debug_response.txt")
-                    with open(debug_file, "w", encoding="utf-8") as f:
-                        f.write(f"原始响应:\n{response}\n\n")
-                        f.write(f"提取的JSON:\n{json_str}\n\n")
-                        f.write(f"错误: {e}")
-                    raise ValueError(f"无法从响应中提取有效的JSON: {e}\n调试信息已保存到: {debug_file}")
-            else:
-                raise ValueError(f"无法从响应中提取有效的JSON: {e}")
 
     def _build_outline_from_data(
         self,

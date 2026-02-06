@@ -17,6 +17,7 @@ from novel_ai_agent.api.schemas.responses import (
 from novel_ai_agent.utils.file_manager import file_manager
 from novel_ai_agent.models.novel import Novel
 from novel_ai_agent.api.websocket import manager as ws_manager
+from novel_ai_agent.utils.logger import get_novel_logs, get_logger
 
 router = APIRouter()
 
@@ -183,47 +184,60 @@ async def create_novel(request: CreateNovelRequest, background_tasks: Background
         coordinator = CoordinatorAgent()
 
         # 在后台任务中执行创作
-        async def create_novel_task():
-            novel_id = None
+        # 在后台任务中执行创作
+        async def create_novel_task(novel_id: str):
             try:
                 # 发送开始通知
-                await ws_manager.broadcast({
+                await ws_manager.broadcast_to_novel({
                     "type": "task_start",
                     "task_type": "create_novel",
-                    "title": request.title
-                })
+                    "title": request.title,
+                    "message": "开始创建小说..."
+                }, novel_id)
 
-                novel = coordinator.create_novel(
+                # 调用 Workflow
+                result = await coordinator.create_novel_workflow(
                     title=request.title,
                     genre=request.genre,
                     theme=request.theme,
                     style=request.style,
-                    num_chapters=request.chapters
+                    chapter_count=request.chapters,
+                    novel_id=novel_id
                 )
-                novel_id = novel.id
-                print(f"小说创建完成: {novel.id}")
+                
+                if result["status"] == "success":
+                    novel = result["novel"]
+                    print(f"小说创建完成: {novel.id}")
 
-                # 发送完成通知
-                await ws_manager.send_task_complete(
-                    novel_id,
-                    "create_novel",
-                    {"novel_id": novel_id, "title": novel.title}
-                )
-            except Exception as e:
-                print(f"小说创建失败: {str(e)}")
-                if novel_id:
-                    await ws_manager.send_task_error(
+                    # 发送完成通知
+                    await ws_manager.send_task_complete(
                         novel_id,
                         "create_novel",
-                        str(e)
+                        {"novel_id": novel_id, "title": novel.title}
                     )
+                else:
+                    raise Exception(result.get("message", "未知错误"))
 
-        background_tasks.add_task(create_novel_task)
+            except Exception as e:
+                print(f"小说创建失败: {str(e)}")
+                await ws_manager.send_task_error(
+                    novel_id,
+                    "create_novel",
+                    str(e)
+                )
+
+        # 生成 ID
+        import uuid
+        novel_id = f"novel_{uuid.uuid4().hex[:8]}"
+        
+        # 启动后台任务
+        background_tasks.add_task(create_novel_task, novel_id)
 
         return ApiResponse(
             success=True,
             message="小说创建任务已启动，正在后台处理",
             data={
+                "novel_id": novel_id,
                 "title": request.title,
                 "genre": request.genre,
                 "chapters": request.chapters
@@ -316,3 +330,122 @@ async def export_novel(novel_id: str, format: str = "txt") -> Dict[str, Any]:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"导出小说失败: {str(e)}")
+
+
+@router.get("/{novel_id}/logs", response_model=Dict[str, Any])
+async def get_novel_creation_logs(novel_id: str) -> Dict[str, Any]:
+    """
+    获取小说创建过程的日志
+
+    返回完整的日志记录，包括：
+    - 工作流状态
+    - 各步骤的执行情况
+    - 错误信息（如果有）
+    - 时间统计
+    """
+    try:
+        logs = get_novel_logs(novel_id)
+
+        if not logs:
+            raise HTTPException(
+                status_code=404,
+                detail=f"未找到小说 {novel_id} 的日志记录"
+            )
+
+        return {
+            "novel_id": novel_id,
+            "workflow_status": logs.get("workflow_status", {}),
+            "logs": logs.get("logs", []),
+            "summary": _generate_log_summary(logs)
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"获取日志失败: {str(e)}"
+        )
+
+
+@router.get("/{novel_id}/logs/status", response_model=Dict[str, Any])
+async def get_novel_creation_status(novel_id: str) -> Dict[str, Any]:
+    """
+    获取小说创建的当前状态（简化版）
+
+    只返回工作流状态，不返回详细日志
+    """
+    try:
+        logs = get_novel_logs(novel_id)
+
+        if not logs:
+            # 如果没有日志文件，尝试从内存中的logger获取
+            try:
+                logger = get_logger(novel_id)
+                return {
+                    "novel_id": novel_id,
+                    "status": logger.get_status()
+                }
+            except:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"未找到小说 {novel_id} 的状态信息"
+                )
+
+        workflow_status = logs.get("workflow_status", {})
+
+        return {
+            "novel_id": novel_id,
+            "status": workflow_status.get("status", "unknown"),
+            "current_step": workflow_status.get("current_step"),
+            "steps_completed": workflow_status.get("steps_completed", []),
+            "start_time": workflow_status.get("start_time"),
+            "end_time": workflow_status.get("end_time"),
+            "has_errors": len(workflow_status.get("errors", [])) > 0,
+            "error_count": len(workflow_status.get("errors", []))
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"获取状态失败: {str(e)}"
+        )
+
+
+def _generate_log_summary(logs: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    生成日志摘要
+
+    Args:
+        logs: 完整的日志数据
+
+    Returns:
+        Dict: 日志摘要
+    """
+    workflow_status = logs.get("workflow_status", {})
+    log_entries = logs.get("logs", [])
+
+    # 统计各级别的日志数量
+    level_counts = {}
+    for entry in log_entries:
+        level = entry.get("level", "UNKNOWN")
+        level_counts[level] = level_counts.get(level, 0) + 1
+
+    # 计算耗时
+    duration = None
+    if workflow_status.get("start_time") and workflow_status.get("end_time"):
+        from datetime import datetime
+        start = datetime.fromisoformat(workflow_status["start_time"])
+        end = datetime.fromisoformat(workflow_status["end_time"])
+        duration = (end - start).total_seconds()
+
+    return {
+        "total_logs": len(log_entries),
+        "level_counts": level_counts,
+        "steps_completed": len(workflow_status.get("steps_completed", [])),
+        "errors": workflow_status.get("errors", []),
+        "duration_seconds": duration,
+        "final_status": workflow_status.get("status", "unknown")
+    }
