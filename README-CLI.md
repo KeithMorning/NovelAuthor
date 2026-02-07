@@ -124,7 +124,13 @@ python main.py review --id novel_001 --chapter 1
 
 # 导出小说
 python main.py export --id novel_001
+
+# 中断继续
+python main.py resume --id novel_001
 ```
+
+
+
 
 **详细命令文档**: [CLI 使用指南](Doc/cli_guide.md)
 

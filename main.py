@@ -151,6 +151,128 @@ def write(
 
 
 @app.command()
+def resume(
+    novel_id: str = typer.Option(..., "--id", "-i", help="小说ID"),
+    skip_memory: bool = typer.Option(False, "--skip-memory", help="跳过记忆加载"),
+    force_reload: bool = typer.Option(False, "--force-reload", help="强制重新加载记忆（清除旧数据）")
+):
+    """从中断位置继续创建小说（重新加载到记忆系统）"""
+    import asyncio
+    from novel_ai_agent.utils.file_manager import file_manager
+    from novel_ai_agent.memory import get_memory_manager
+    import json
+
+    console.print(Panel(f"[bold cyan]恢复小说创建: {novel_id}[/bold cyan]"))
+
+    # 1. 检查小说文件是否存在
+    novel = file_manager.load_novel_json(novel_id)
+    if not novel:
+        console.print(f"[red]✗[/red] 未找到小说文件: {novel_id}")
+        console.print(f"\n请检查小说ID是否正确，或使用 [cyan]python main.py list[/cyan] 查看所有小说")
+        return
+
+    console.print(f"[green]✓[/green] 找到小说: [yellow]{novel.title}[/yellow]")
+
+    # 2. 检查工作流状态日志
+    log_file = Path(f"logs/novel_{novel_id}.json")
+    workflow_status = None
+
+    if log_file.exists():
+        with open(log_file, 'r', encoding='utf-8') as f:
+            log_data = json.load(f)
+            workflow_status = log_data.get("workflow_status", {})
+
+        console.print(f"\n[bold]工作流状态:[/bold]")
+        console.print(f"  当前步骤: [yellow]{workflow_status.get('current_step', '未知')}[/yellow]")
+        console.print(f"  状态: [yellow]{workflow_status.get('status', '未知')}[/yellow]")
+
+        completed_steps = workflow_status.get('steps_completed', [])
+        console.print(f"\n[bold]已完成步骤:[/bold]")
+        for step in completed_steps:
+            console.print(f"  ✓ {step}")
+
+        errors = workflow_status.get('errors', [])
+        if errors:
+            console.print(f"\n[bold red]错误信息:[/bold red]")
+            for error in errors:
+                console.print(f"  [red]✗[/red] {error.get('step', '未知')}: {error.get('error', '')}")
+    else:
+        console.print(f"\n[yellow]![/yellow] 未找到工作流日志文件")
+
+    # 3. 显示小说状态
+    console.print(f"\n[bold]小说信息:[/bold]")
+    console.print(f"  标题: {novel.title}")
+    console.print(f"  类型: {novel.genre}")
+    console.print(f"  风格: {novel.author_style}")
+    console.print(f"  大纲: {'✓ 已生成' if novel.outline else '✗ 未生成'}")
+    console.print(f"  角色数: {len(novel.characters)}")
+    console.print(f"  章节数: {len(novel.chapters)}")
+
+    # 4. 确定需要执行的步骤
+    needs_memory_load = False
+
+    if workflow_status:
+        completed = workflow_status.get('steps_completed', [])
+        current_step = workflow_status.get('current_step', '')
+
+        # 如果在"加载记忆"步骤失败，或者已完成保存但未完成记忆加载
+        if current_step == "加载记忆" or ("保存文件" in completed and "加载记忆" not in completed):
+            needs_memory_load = True
+
+    # 如果有大纲和角色但还没加载到记忆，也需要加载
+    if novel.outline and novel.characters and not skip_memory:
+        console.print(f"\n[bold cyan]检测到需要加载到记忆系统[/bold cyan]")
+        needs_memory_load = True
+
+    # 5. 执行恢复操作
+    if needs_memory_load and not skip_memory:
+        if force_reload:
+            console.print(f"\n[yellow]⚠️  强制重新加载模式：将清除旧的记忆数据[/yellow]")
+        console.print(f"\n[cyan]正在加载小说到记忆系统...[/cyan]")
+
+        try:
+            with console.status("[bold green]加载记忆中..."):
+                memory_manager = get_memory_manager(novel_id)
+                memory_manager.load_novel_to_memory(novel, force_reload=force_reload)
+
+            console.print(f"[green]✓[/green] 小说已成功加载到记忆系统")
+
+            # 显示记忆统计
+            stats = memory_manager.vector_store.get_collection_stats(novel_id)
+            console.print(f"\n[bold]记忆统计:[/bold]")
+            console.print(f"  角色记录: {stats.get('characters', 0)}")
+            console.print(f"  情节记录: {stats.get('plots', 0)}")
+            console.print(f"  章节记录: {stats.get('chapters', 0)}")
+
+            console.print(f"\n[bold green]✓ 小说恢复完成！[/bold green]")
+
+        except Exception as e:
+            console.print(f"\n[red]✗[/red] 加载记忆失败: {e}")
+            console.print(f"\n[yellow]提示:[/yellow] 可以使用 [cyan]--skip-memory[/cyan] 跳过记忆加载")
+            return
+
+    elif skip_memory:
+        console.print(f"\n[yellow]![/yellow] 已跳过记忆加载")
+        console.print(f"\n[bold green]✓ 小说数据已就绪[/bold green]")
+
+    else:
+        console.print(f"\n[green]✓[/green] 小说状态正常，无需额外操作")
+
+    # 6. 显示后续操作建议
+    console.print(f"\n[bold green]接下来可以:[/bold green]")
+
+    if len(novel.chapters) == 0:
+        console.print(f"- 开始写作第1章: [cyan]python main.py write --id {novel_id} --chapter 1[/cyan]")
+    else:
+        next_chapter = len(novel.chapters) + 1
+        console.print(f"- 继续写作第{next_chapter}章: [cyan]python main.py write --id {novel_id} --chapter {next_chapter}[/cyan]")
+
+    console.print(f"- 查看大纲: [cyan]cat novel_ai_agent/output/outlines/{novel_id}_outline_v1.md[/cyan]")
+    console.print(f"- 查看角色: [cyan]cat novel_ai_agent/output/characters/{novel_id}_characters.md[/cyan]")
+    console.print(f"- 查看记忆统计: [cyan]python main.py memory-stats --id {novel_id}[/cyan]")
+
+
+@app.command()
 def list_novels():
     """列出所有小说项目"""
     from novel_ai_agent.utils.file_manager import file_manager

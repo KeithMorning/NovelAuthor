@@ -1,0 +1,126 @@
+{
+  "workflow_status": {
+    "novel_id": "novel_cb189d4c",
+    "start_time": "2026-02-07T17:54:38.969456",
+    "end_time": null,
+    "current_step": "加载记忆",
+    "status": "running",
+    "steps_completed": [
+      "初始化",
+      "生成大纲",
+      "生成角色",
+      "保存文件"
+    ],
+    "errors": [
+      {
+        "timestamp": "2026-02-07T17:56:43.749654",
+        "step": "加载记忆",
+        "error": "本地模型加载失败: [Errno 54] Connection reset by peer\n请确保模型已缓存到本地，或运行: python3 scripts/download_models.py"
+      }
+    ]
+  },
+  "logs": [
+    {
+      "timestamp": "2026-02-07T17:54:38.969473",
+      "level": "INFO",
+      "step": "初始化",
+      "message": "开始创建小说，ID: novel_cb189d4c"
+    },
+    {
+      "timestamp": "2026-02-07T17:54:38.969970",
+      "level": "INFO",
+      "step": "初始化",
+      "message": "创建小说对象: 离线测试小说2 (科幻)"
+    },
+    {
+      "timestamp": "2026-02-07T17:54:38.970376",
+      "level": "SUCCESS",
+      "step": "初始化",
+      "message": "✓ 小说对象创建成功",
+      "details": {
+        "novel_id": "novel_cb189d4c",
+        "title": "离线测试小说2",
+        "genre": "科幻",
+        "style": "中性风格",
+        "chapter_count": 2
+      }
+    },
+    {
+      "timestamp": "2026-02-07T17:54:38.970677",
+      "level": "INFO",
+      "step": "生成大纲",
+      "message": "开始生成大纲，目标章节数: 2"
+    },
+    {
+      "timestamp": "2026-02-07T17:55:14.450011",
+      "level": "SUCCESS",
+      "step": "生成大纲",
+      "message": "✓ 大纲生成成功，包含 2 章",
+      "details": {
+        "chapter_count": 2,
+        "plot_points": 3
+      }
+    },
+    {
+      "timestamp": "2026-02-07T17:55:14.450652",
+      "level": "INFO",
+      "step": "生成角色",
+      "message": "开始生成角色"
+    },
+    {
+      "timestamp": "2026-02-07T17:56:25.935202",
+      "level": "SUCCESS",
+      "step": "生成角色",
+      "message": "✓ 角色生成成功，创建了 5 个角色",
+      "details": {
+        "character_count": 5,
+        "characters": [
+          "林薇",
+          "普罗米修斯 (AI)",
+          "陈锋",
+          "张明远",
+          "李哲"
+        ]
+      }
+    },
+    {
+      "timestamp": "2026-02-07T17:56:25.936008",
+      "level": "INFO",
+      "step": "保存文件",
+      "message": "保存小说文件"
+    },
+    {
+      "timestamp": "2026-02-07T17:56:25.937794",
+      "level": "SUCCESS",
+      "step": "保存文件",
+      "message": "✓ 小说文件保存成功",
+      "details": {
+        "files": [
+          "novel.json",
+          "outline.md",
+          "characters.md"
+        ]
+      }
+    },
+    {
+      "timestamp": "2026-02-07T17:56:25.938265",
+      "level": "INFO",
+      "step": "加载记忆",
+      "message": "加载到记忆系统"
+    },
+    {
+      "timestamp": "2026-02-07T17:56:43.749654",
+      "level": "ERROR",
+      "step": "加载记忆",
+      "message": "✗ 创建小说时出错: 本地模型加载失败: [Errno 54] Connection reset by peer\n请确保模型已缓存到本地，或运行: python3 scripts/download_models.py",
+      "details": {
+        "title": "离线测试小说2",
+        "genre": "科幻"
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "本地模型加载失败: [Errno 54] Connection reset by peer\n请确保模型已缓存到本地，或运行: python3 scripts/download_models.py"
+      }
+    }
+  ]
+}

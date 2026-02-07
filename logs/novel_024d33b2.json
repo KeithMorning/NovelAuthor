@@ -1,0 +1,126 @@
+{
+  "workflow_status": {
+    "novel_id": "novel_024d33b2",
+    "start_time": "2026-02-07T17:50:13.073267",
+    "end_time": null,
+    "current_step": "加载记忆",
+    "status": "running",
+    "steps_completed": [
+      "初始化",
+      "生成大纲",
+      "生成角色",
+      "保存文件"
+    ],
+    "errors": [
+      {
+        "timestamp": "2026-02-07T17:53:05.832002",
+        "step": "加载记忆",
+        "error": "本地模型加载失败: Cannot send a request, as the client has been closed.\n请确保模型已缓存到本地，或运行: python3 scripts/download_models.py"
+      }
+    ]
+  },
+  "logs": [
+    {
+      "timestamp": "2026-02-07T17:50:13.073283",
+      "level": "INFO",
+      "step": "初始化",
+      "message": "开始创建小说，ID: novel_024d33b2"
+    },
+    {
+      "timestamp": "2026-02-07T17:50:13.074352",
+      "level": "INFO",
+      "step": "初始化",
+      "message": "创建小说对象: 离线测试小说 (科幻)"
+    },
+    {
+      "timestamp": "2026-02-07T17:50:13.074705",
+      "level": "SUCCESS",
+      "step": "初始化",
+      "message": "✓ 小说对象创建成功",
+      "details": {
+        "novel_id": "novel_024d33b2",
+        "title": "离线测试小说",
+        "genre": "科幻",
+        "style": "中性风格",
+        "chapter_count": 2
+      }
+    },
+    {
+      "timestamp": "2026-02-07T17:50:13.075031",
+      "level": "INFO",
+      "step": "生成大纲",
+      "message": "开始生成大纲，目标章节数: 2"
+    },
+    {
+      "timestamp": "2026-02-07T17:50:48.770501",
+      "level": "SUCCESS",
+      "step": "生成大纲",
+      "message": "✓ 大纲生成成功，包含 2 章",
+      "details": {
+        "chapter_count": 2,
+        "plot_points": 3
+      }
+    },
+    {
+      "timestamp": "2026-02-07T17:50:48.771074",
+      "level": "INFO",
+      "step": "生成角色",
+      "message": "开始生成角色"
+    },
+    {
+      "timestamp": "2026-02-07T17:52:22.016439",
+      "level": "SUCCESS",
+      "step": "生成角色",
+      "message": "✓ 角色生成成功，创建了 5 个角色",
+      "details": {
+        "character_count": 5,
+        "characters": [
+          "艾琳·陈",
+          "普罗米修斯",
+          "凯恩博士",
+          "马克斯",
+          "里奥"
+        ]
+      }
+    },
+    {
+      "timestamp": "2026-02-07T17:52:22.017016",
+      "level": "INFO",
+      "step": "保存文件",
+      "message": "保存小说文件"
+    },
+    {
+      "timestamp": "2026-02-07T17:52:22.019458",
+      "level": "SUCCESS",
+      "step": "保存文件",
+      "message": "✓ 小说文件保存成功",
+      "details": {
+        "files": [
+          "novel.json",
+          "outline.md",
+          "characters.md"
+        ]
+      }
+    },
+    {
+      "timestamp": "2026-02-07T17:52:22.019905",
+      "level": "INFO",
+      "step": "加载记忆",
+      "message": "加载到记忆系统"
+    },
+    {
+      "timestamp": "2026-02-07T17:53:05.832002",
+      "level": "ERROR",
+      "step": "加载记忆",
+      "message": "✗ 创建小说时出错: 本地模型加载失败: Cannot send a request, as the client has been closed.\n请确保模型已缓存到本地，或运行: python3 scripts/download_models.py",
+      "details": {
+        "title": "离线测试小说",
+        "genre": "科幻"
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "本地模型加载失败: Cannot send a request, as the client has been closed.\n请确保模型已缓存到本地，或运行: python3 scripts/download_models.py"
+      }
+    }
+  ]
+}

@@ -3,6 +3,7 @@
 使用Chroma存储和检索小说相关信息
 """
 import os
+import time
 from typing import List, Dict, Optional
 from pathlib import Path
 import chromadb
@@ -10,6 +11,9 @@ from chromadb.config import Settings
 from langchain_community.vectorstores import Chroma
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_core.documents import Document
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class VectorMemoryStore:
@@ -41,12 +45,8 @@ class VectorMemoryStore:
         self.persist_directory = persist_directory
         Path(persist_directory).mkdir(parents=True, exist_ok=True)
 
-        # 使用本地开源embedding模型
-        self.embeddings = HuggingFaceEmbeddings(
-            model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
-            model_kwargs={'device': 'cpu'},
-            encode_kwargs={'normalize_embeddings': True}
-        )
+        # 使用完全本地的 embedding，避免网络依赖
+        self.embeddings = self._init_embeddings()
 
         # 初始化Chroma客户端
         self.client = chromadb.PersistentClient(
@@ -56,6 +56,81 @@ class VectorMemoryStore:
                 allow_reset=True
             )
         )
+
+    def _init_embeddings(self):
+        """
+        初始化 Embedding 模型（完全本地化）
+
+        优先级：
+        1. 使用 local_embeddings.py 中的 LocalEmbeddings（完全离线）
+        2. 如果模型未缓存，使用 HuggingFaceEmbeddings 下载
+        3. 失败时抛出错误并提示
+        """
+        logger.info("="*60)
+        logger.info("VectorMemoryStore: 初始化 Embedding 模型")
+        logger.info("="*60)
+        logger.info("策略: 优先使用本地缓存模型（离线模式）")
+
+        try:
+            # 方案1: 使用完全离线的 LocalEmbeddings
+            logger.info("方案1: 导入 LocalEmbeddings")
+            from novel_ai_agent.memory.local_embeddings import LocalEmbeddings
+
+            logger.info("方案1: 创建 LocalEmbeddings 实例...")
+            init_start = time.time()
+
+            embeddings = LocalEmbeddings()
+
+            init_time = time.time() - init_start
+            logger.info(f"✓ LocalEmbeddings 初始化成功，耗时: {init_time:.3f}秒")
+            logger.info("✓ 使用本地缓存的 Embedding 模型（完全离线）")
+            logger.info("="*60)
+
+            return embeddings
+
+        except RuntimeError as e:
+            logger.error(f"方案1 失败: {e}")
+            # 如果模型未缓存，提示错误信息
+            if "模型未缓存到本地" in str(e):
+                logger.warning(f"模型未缓存: {e}")
+                logger.warning("尝试使用 HuggingFaceEmbeddings 下载...")
+
+                # 方案2: 允许网络下载
+                os.environ.pop('HF_HUB_OFFLINE', None)
+                os.environ.pop('TRANSFORMERS_OFFLINE', None)
+
+                try:
+                    embeddings = HuggingFaceEmbeddings(
+                        model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+                        model_kwargs={'device': 'cpu'},
+                        encode_kwargs={'normalize_embeddings': True}
+                    )
+                    logger.info("✓ Embedding 模型下载并初始化成功")
+                    logger.info("下次启动将使用本地缓存，无需网络")
+                    return embeddings
+
+                except Exception as e2:
+                    logger.error(f"Embedding 下载失败: {e2}")
+                    logger.error(
+                        "请运行预下载脚本: python3 scripts/download_models.py"
+                    )
+                    raise RuntimeError(
+                        f"Embedding 初始化失败。请先运行: python3 scripts/download_models.py\n"
+                        f"错误详情: {str(e2)}"
+                    ) from e2
+            else:
+                # 其他错误直接抛出
+                raise
+
+        except Exception as e:
+            logger.error(f"Embedding 初始化失败: {e}")
+            logger.error(
+                "请运行预下载脚本: python3 scripts/download_models.py"
+            )
+            raise RuntimeError(
+                f"Embedding 初始化失败: {str(e)}\n"
+                f"请先运行: python3 scripts/download_models.py"
+            ) from e
 
     def get_collection(self, novel_id: str, collection_type: str) -> Chroma:
         """

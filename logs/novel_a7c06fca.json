@@ -1,0 +1,106 @@
+{
+  "workflow_status": {
+    "novel_id": "novel_a7c06fca",
+    "start_time": "2026-02-07T17:14:47.958644",
+    "end_time": null,
+    "current_step": "加载记忆",
+    "status": "running",
+    "steps_completed": [
+      "初始化",
+      "生成大纲",
+      "生成角色",
+      "保存文件"
+    ],
+    "errors": []
+  },
+  "logs": [
+    {
+      "timestamp": "2026-02-07T17:14:47.958676",
+      "level": "INFO",
+      "step": "初始化",
+      "message": "开始创建小说，ID: novel_a7c06fca"
+    },
+    {
+      "timestamp": "2026-02-07T17:14:47.959214",
+      "level": "INFO",
+      "step": "初始化",
+      "message": "创建小说对象: 闭包逃逸 (科幻)"
+    },
+    {
+      "timestamp": "2026-02-07T17:14:47.959513",
+      "level": "SUCCESS",
+      "step": "初始化",
+      "message": "✓ 小说对象创建成功",
+      "details": {
+        "novel_id": "novel_a7c06fca",
+        "title": "闭包逃逸",
+        "genre": "科幻",
+        "style": "刘慈欣",
+        "chapter_count": 6
+      }
+    },
+    {
+      "timestamp": "2026-02-07T17:14:47.959946",
+      "level": "INFO",
+      "step": "生成大纲",
+      "message": "开始生成大纲，目标章节数: 6"
+    },
+    {
+      "timestamp": "2026-02-07T17:16:07.146761",
+      "level": "SUCCESS",
+      "step": "生成大纲",
+      "message": "✓ 大纲生成成功，包含 6 章",
+      "details": {
+        "chapter_count": 6,
+        "plot_points": 4
+      }
+    },
+    {
+      "timestamp": "2026-02-07T17:16:07.147407",
+      "level": "INFO",
+      "step": "生成角色",
+      "message": "开始生成角色"
+    },
+    {
+      "timestamp": "2026-02-07T17:17:34.902696",
+      "level": "SUCCESS",
+      "step": "生成角色",
+      "message": "✓ 角色生成成功，创建了 5 个角色",
+      "details": {
+        "character_count": 5,
+        "characters": [
+          "林薇",
+          "陈默",
+          "普罗米修斯（AI）",
+          "张立恒",
+          "周锐"
+        ]
+      }
+    },
+    {
+      "timestamp": "2026-02-07T17:17:34.903360",
+      "level": "INFO",
+      "step": "保存文件",
+      "message": "保存小说文件"
+    },
+    {
+      "timestamp": "2026-02-07T17:17:34.905249",
+      "level": "SUCCESS",
+      "step": "保存文件",
+      "message": "✓ 小说文件保存成功",
+      "details": {
+        "files": [
+          "novel.json",
+          "outline.md",
+          "characters.md"
+        ]
+      }
+    },
+    {
+      "timestamp": "2026-02-07T17:17:34.905730",
+      "level": "INFO",
+      "step": "加载记忆",
+      "message": "加载到记忆系统"
+    }
+  ]
+}

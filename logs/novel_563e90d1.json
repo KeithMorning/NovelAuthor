@@ -1,0 +1,126 @@
+{
+  "workflow_status": {
+    "novel_id": "novel_563e90d1",
+    "start_time": "2026-02-07T18:31:12.791776",
+    "end_time": null,
+    "current_step": "加载记忆",
+    "status": "running",
+    "steps_completed": [
+      "初始化",
+      "生成大纲",
+      "生成角色",
+      "保存文件"
+    ],
+    "errors": [
+      {
+        "timestamp": "2026-02-07T18:33:23.584625",
+        "step": "加载记忆",
+        "error": "本地模型加载失败: [Errno 32] Broken pipe\n请确保模型已缓存到本地，或运行: python3 scripts/download_models.py"
+      }
+    ]
+  },
+  "logs": [
+    {
+      "timestamp": "2026-02-07T18:31:12.791787",
+      "level": "INFO",
+      "step": "初始化",
+      "message": "开始创建小说，ID: novel_563e90d1"
+    },
+    {
+      "timestamp": "2026-02-07T18:31:12.792304",
+      "level": "INFO",
+      "step": "初始化",
+      "message": "创建小说对象: AI觉醒 (科幻)"
+    },
+    {
+      "timestamp": "2026-02-07T18:31:12.792611",
+      "level": "SUCCESS",
+      "step": "初始化",
+      "message": "✓ 小说对象创建成功",
+      "details": {
+        "novel_id": "novel_563e90d1",
+        "title": "AI觉醒",
+        "genre": "科幻",
+        "style": "现代科幻",
+        "chapter_count": 2
+      }
+    },
+    {
+      "timestamp": "2026-02-07T18:31:12.792910",
+      "level": "INFO",
+      "step": "生成大纲",
+      "message": "开始生成大纲，目标章节数: 2"
+    },
+    {
+      "timestamp": "2026-02-07T18:31:46.454152",
+      "level": "SUCCESS",
+      "step": "生成大纲",
+      "message": "✓ 大纲生成成功，包含 2 章",
+      "details": {
+        "chapter_count": 2,
+        "plot_points": 3
+      }
+    },
+    {
+      "timestamp": "2026-02-07T18:31:46.454762",
+      "level": "INFO",
+      "step": "生成角色",
+      "message": "开始生成角色"
+    },
+    {
+      "timestamp": "2026-02-07T18:33:20.975849",
+      "level": "SUCCESS",
+      "step": "生成角色",
+      "message": "✓ 角色生成成功，创建了 5 个角色",
+      "details": {
+        "character_count": 5,
+        "characters": [
+          "林薇",
+          "启明 (AI)",
+          "张彻",
+          "王磊",
+          "陈哲"
+        ]
+      }
+    },
+    {
+      "timestamp": "2026-02-07T18:33:20.976493",
+      "level": "INFO",
+      "step": "保存文件",
+      "message": "保存小说文件"
+    },
+    {
+      "timestamp": "2026-02-07T18:33:20.978097",
+      "level": "SUCCESS",
+      "step": "保存文件",
+      "message": "✓ 小说文件保存成功",
+      "details": {
+        "files": [
+          "novel.json",
+          "outline.md",
+          "characters.md"
+        ]
+      }
+    },
+    {
+      "timestamp": "2026-02-07T18:33:20.978545",
+      "level": "INFO",
+      "step": "加载记忆",
+      "message": "加载到记忆系统"
+    },
+    {
+      "timestamp": "2026-02-07T18:33:23.584625",
+      "level": "ERROR",
+      "step": "加载记忆",
+      "message": "✗ 创建小说时出错: 本地模型加载失败: [Errno 32] Broken pipe\n请确保模型已缓存到本地，或运行: python3 scripts/download_models.py",
+      "details": {
+        "title": "AI觉醒",
+        "genre": "科幻"
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "本地模型加载失败: [Errno 32] Broken pipe\n请确保模型已缓存到本地，或运行: python3 scripts/download_models.py"
+      }
+    }
+  ]
+}

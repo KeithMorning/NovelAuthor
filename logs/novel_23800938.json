@@ -1,0 +1,125 @@
+{
+  "workflow_status": {
+    "novel_id": "novel_23800938",
+    "start_time": "2026-02-07T18:07:50.852664",
+    "end_time": null,
+    "current_step": "加载记忆",
+    "status": "running",
+    "steps_completed": [
+      "初始化",
+      "生成大纲",
+      "生成角色",
+      "保存文件"
+    ],
+    "errors": [
+      {
+        "timestamp": "2026-02-07T18:11:41.035203",
+        "step": "加载记忆",
+        "error": "网络错误导致模型加载失败（已重试 3 次）。\n这通常是因为 sentence-transformers 尝试检查模型更新，但网络不稳定。\n解决方案：\n1. 检查网络连接是否稳定\n2. 稍后重试\n3. 或者使用完全断网的环境运行\n原始错误: Cannot send a request, as the client has been closed."
+      }
+    ]
+  },
+  "logs": [
+    {
+      "timestamp": "2026-02-07T18:07:50.852680",
+      "level": "INFO",
+      "step": "初始化",
+      "message": "开始创建小说，ID: novel_23800938"
+    },
+    {
+      "timestamp": "2026-02-07T18:07:50.853134",
+      "level": "INFO",
+      "step": "初始化",
+      "message": "创建小说对象: 离线测试4 (科幻)"
+    },
+    {
+      "timestamp": "2026-02-07T18:07:50.853602",
+      "level": "SUCCESS",
+      "step": "初始化",
+      "message": "✓ 小说对象创建成功",
+      "details": {
+        "novel_id": "novel_23800938",
+        "title": "离线测试4",
+        "genre": "科幻",
+        "style": "中性风格",
+        "chapter_count": 2
+      }
+    },
+    {
+      "timestamp": "2026-02-07T18:07:50.853879",
+      "level": "INFO",
+      "step": "生成大纲",
+      "message": "开始生成大纲，目标章节数: 2"
+    },
+    {
+      "timestamp": "2026-02-07T18:08:22.334409",
+      "level": "SUCCESS",
+      "step": "生成大纲",
+      "message": "✓ 大纲生成成功，包含 2 章",
+      "details": {
+        "chapter_count": 2,
+        "plot_points": 3
+      }
+    },
+    {
+      "timestamp": "2026-02-07T18:08:22.335147",
+      "level": "INFO",
+      "step": "生成角色",
+      "message": "开始生成角色"
+    },
+    {
+      "timestamp": "2026-02-07T18:09:34.364392",
+      "level": "SUCCESS",
+      "step": "生成角色",
+      "message": "✓ 角色生成成功，创建了 4 个角色",
+      "details": {
+        "character_count": 4,
+        "characters": [
+          "林默",
+          "离线测试4 (AI，无实体，以语音/界面交互)",
+          "陈岩",
+          "沈星河"
+        ]
+      }
+    },
+    {
+      "timestamp": "2026-02-07T18:09:34.365061",
+      "level": "INFO",
+      "step": "保存文件",
+      "message": "保存小说文件"
+    },
+    {
+      "timestamp": "2026-02-07T18:09:34.366805",
+      "level": "SUCCESS",
+      "step": "保存文件",
+      "message": "✓ 小说文件保存成功",
+      "details": {
+        "files": [
+          "novel.json",
+          "outline.md",
+          "characters.md"
+        ]
+      }
+    },
+    {
+      "timestamp": "2026-02-07T18:09:34.367255",
+      "level": "INFO",
+      "step": "加载记忆",
+      "message": "加载到记忆系统"
+    },
+    {
+      "timestamp": "2026-02-07T18:11:41.035203",
+      "level": "ERROR",
+      "step": "加载记忆",
+      "message": "✗ 创建小说时出错: 网络错误导致模型加载失败（已重试 3 次）。\n这通常是因为 sentence-transformers 尝试检查模型更新，但网络不稳定。\n解决方案：\n1. 检查网络连接是否稳定\n2. 稍后重试\n3. 或者使用完全断网的环境运行\n原始错误: Cannot send a request, as the client has been closed.",
+      "details": {
+        "title": "离线测试4",
+        "genre": "科幻"
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "网络错误导致模型加载失败（已重试 3 次）。\n这通常是因为 sentence-transformers 尝试检查模型更新，但网络不稳定。\n解决方案：\n1. 检查网络连接是否稳定\n2. 稍后重试\n3. 或者使用完全断网的环境运行\n原始错误: Cannot send a request, as the client has been closed."
+      }
+    }
+  ]
+}

@@ -262,8 +262,19 @@ class CoordinatorAgent(BaseAgent):
             }
 
         except Exception as e:
+            # 获取当前步骤，如果是字符串则转换为枚举
+            current_step_str = logger.workflow_status.get("current_step")
+            if current_step_str:
+                # 根据字符串查找对应的枚举
+                current_step = next(
+                    (step for step in WorkflowStep if step.value == current_step_str),
+                    WorkflowStep.FAILED
+                )
+            else:
+                current_step = WorkflowStep.INIT
+
             logger.step_error(
-                logger.workflow_status.get("current_step", WorkflowStep.INIT),
+                current_step,
                 f"创建小说时出错: {str(e)}",
                 e,
                 details={"title": title, "genre": genre}

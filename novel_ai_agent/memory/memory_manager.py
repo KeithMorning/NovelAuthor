@@ -39,13 +39,40 @@ class MemoryManager:
             "conversation_history": []
         }
 
-    def load_novel_to_memory(self, novel: Novel):
+    def load_novel_to_memory(self, novel: Novel, force_reload: bool = False):
         """
         将小说加载到记忆系统
 
         Args:
             novel: 小说对象
+            force_reload: 是否强制重新加载（会清除旧数据）
         """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        # 如果是强制重新加载，先清除旧数据
+        if force_reload:
+            logger.info(f"强制重新加载记忆，清除旧数据...")
+            self.vector_store.delete_novel_collections(self.novel_id)
+            logger.info(f"✓ 旧数据已清除")
+
+        # 检查是否已经加载过（避免重复加载）
+        if not force_reload:
+            stats = self.vector_store.get_collection_stats(self.novel_id)
+            already_loaded = (
+                stats.get('characters', 0) > 0 or
+                stats.get('plots', 0) > 0 or
+                stats.get('chapters', 0) > 0
+            )
+
+            if already_loaded:
+                logger.warning(f"检测到记忆系统中已有数据:")
+                logger.warning(f"  角色: {stats.get('characters', 0)}")
+                logger.warning(f"  情节点: {stats.get('plots', 0)}")
+                logger.warning(f"  章节: {stats.get('chapters', 0)}")
+                logger.warning(f"跳过加载以避免重复数据。如需重新加载，请使用 force_reload=True")
+                return
+
         # 存储角色到向量数据库
         if novel.characters:
             characters_data = [
