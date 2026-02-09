@@ -98,35 +98,334 @@ pip3 install -r requirements.txt
 python main.py init
 ```
 
-#### 基本命令
+#### 命令快速参考
 
+| 类别 | 命令 | 描述 | 主要参数 |
+|------|------|------|----------|
+| **初始化** | `init` | 初始化项目配置 | 无 |
+| **小说管理** | `create` | 创建新小说（含大纲） | `--title` `--genre` `--theme` |
+| | `outline` | 生成/更新大纲 | `--id` `--theme` |
+| | `list-novels` | 列出所有小说 | 无 |
+| | `check` | 检查内容一致性 | `--id` |
+| | `export` | 导出为Markdown | `--id` `--output` |
+| | `resume` | 从中断继续 | `--id` |
+| **章节创作** | `write` | 写作章节 | `--id` `--chapter` |
+| | `polish` | 润色章节 | `--id` `--chapter` |
+| | `review` | 评审章节 | `--id` `--chapter` |
+| | `interactive` | 交互式创作 | `--id` |
+| **风格** | `styles` | 列出所有风格 | 无 |
+| | `style-info` | 查看风格详情 | `--style` |
+| | `recommend-style` | 推荐合适风格 | `--genre` |
+| **记忆** | `memory-stats` | 记忆统计 | `--id` |
+| | `search-memory` | 搜索记忆 | `--id` `--query` |
+| **工具** | `version` | 显示版本 | 无 |
+
+#### 常见使用场景
+
+##### 场景 1: 从零开始创作一部小说
 ```bash
-# 查看所有命令
-python main.py --help
+# 1. 初始化项目
+python main.py init
 
-# 查看可用风格
+# 2. 创建小说（自动生成大纲和角色）
+python main.py create \
+  --title "时空守护者" \
+  --genre "科幻" \
+  --theme "量子物理学家发现平行宇宙的秘密" \
+  --style "刘慈欣" \
+  --chapters 15
+
+# 3. 写作第1章
+python main.py write --id novel_xxx --chapter 1
+
+# 4. 润色第1章
+python main.py polish --id novel_xxx --chapter 1
+
+# 5. 评审第1章
+python main.py review --id novel_xxx --chapter 1
+
+# 6. 继续写作后续章节
+python main.py write --id novel_xxx --chapter 2
+python main.py write --id novel_xxx --chapter 3
+
+# 7. 导出完整小说
+python main.py export --id novel_xxx
+```
+
+##### 场景 2: 查找最合适的写作风格
+```bash
+# 1. 查看所有可用风格
 python main.py styles
 
-# 创建新小说
-python main.py create --title "星际迷航" --genre "科幻" --style "刘慈欣"
+# 2. 获取类型推荐
+python main.py recommend-style --genre "推理"
 
-# 生成大纲
-python main.py outline --id novel_001 --theme "人类探索宇宙的故事"
+# 3. 查看具体风格详情
+python main.py style-info --style "东野圭吾"
+```
 
-# 写作章节
+##### 场景 3: 使用记忆系统提升连贯性
+```bash
+# 1. 查看记忆统计
+python main.py memory-stats --id novel_xxx
+
+# 2. 搜索特定角色信息
+python main.py search-memory \
+  --id novel_xxx \
+  --query "主角的性格" \
+  --type character
+
+# 3. 搜索情节线索
+python main.py search-memory \
+  --id novel_xxx \
+  --query "时间旅行的规则" \
+  --type plot
+```
+
+##### 场景 4: 处理创作中断
+```bash
+# 系统崩溃或中断后，从断点继续
+python main.py resume --id novel_xxx
+
+# 跳过大纲生成直接继续写作
+python main.py resume --id novel_xxx --skip-outline
+
+# 强制重新加载记忆系统
+python main.py resume --id novel_xxx --force-reload
+```
+
+---
+
+#### 详细命令文档
+
+
+
+#### 1. 初始化和配置
+
+##### `init` - 初始化项目
+创建必要的目录和配置文件
+
+```bash
+python main.py init
+```
+
+交互式输入 Anthropic API Key，自动创建 `.env` 配置文件和输出目录。
+
+---
+
+#### 2. 小说创建和管理
+
+##### `create` - 创建新小说
+创建新小说项目（包含大纲和角色生成）
+
+```bash
+python main.py create \
+  --title "星际迷航" \
+  --genre "科幻" \
+  --theme "人类探索宇宙的故事" \
+  --style "刘慈欣" \
+  --chapters 20 \
+  --requirements "加入时间旅行元素"
+```
+
+**参数**:
+- `--title, -t`: 小说标题（必填）
+- `--genre, -g`: 小说类型，如武侠/科幻/推理（必填）
+- `--theme`: 故事主题（必填）
+- `--style, -s`: 作家风格（默认：中性风格）
+- `--chapters, -n`: 章节数量（默认：20）
+- `--requirements, -r`: 额外需求（可选）
+
+##### `outline` - 生成大纲
+为小说生成大纲（适用于已创建但未生成大纲的小说）
+
+```bash
+python main.py outline --id novel_001 \
+  --theme "人工智能觉醒的故事"
+```
+
+**参数**:
+- `--id, -i`: 小说ID（必填）
+- `--theme`: 故事主题（必填）
+
+##### `list-novels` - 列出所有小说
+显示所有创建的小说项目
+
+```bash
+python main.py list-novels
+```
+
+##### `check` - 检查小说一致性
+检查小说的内容一致性（角色、情节、设定等）
+
+```bash
+python main.py check --id novel_001
+```
+
+**参数**:
+- `--id, -i`: 小说ID（必填）
+
+##### `export` - 导出小说
+将小说导出为 Markdown 文件
+
+```bash
+python main.py export --id novel_001 --output ./export/my_novel.md
+```
+
+**参数**:
+- `--id, -i`: 小说ID（必填）
+- `--output, -o`: 输出文件路径（可选）
+
+##### `resume` - 从中断继续
+从中断位置继续创建小说（重新加载到记忆系统）
+
+```bash
+python main.py resume --id novel_001 --skip-outline --force-reload
+```
+
+**参数**:
+- `--id, -i`: 小说ID（必填）
+- `--skip-outline`: 跳过大纲生成（可选）
+- `--force-reload`: 强制重新加载记忆（可选）
+
+---
+
+#### 3. 章节创作和编辑
+
+##### `write` - 写作章节
+AI 自动创作指定章节
+
+```bash
 python main.py write --id novel_001 --chapter 1
+```
 
-# 润色章节
-python main.py polish --id novel_001 --chapter 1
+**参数**:
+- `--id, -i`: 小说ID（必填）
+- `--chapter, -c`: 章节编号（必填）
 
-# 评审章节
+##### `polish` - 润色章节
+AI 润色指定章节内容
+
+```bash
+python main.py polish --id novel_001 --chapter 1 --focus "语言优美度"
+```
+
+**参数**:
+- `--id, -i`: 小说ID（必填）
+- `--chapter, -c`: 章节编号（必填）
+- `--focus, -f`: 重点关注方面（可选）
+
+##### `review` - 评审章节
+AI 多维度评审章节质量
+
+```bash
 python main.py review --id novel_001 --chapter 1
+```
 
-# 导出小说
-python main.py export --id novel_001
+**参数**:
+- `--id, -i`: 小说ID（必填）
+- `--chapter, -c`: 章节编号（必填）
 
-# 中断继续
-python main.py resume --id novel_001
+##### `interactive` - 交互式创作
+启动交互式创作模式，逐步引导创作
+
+```bash
+python main.py interactive --id novel_001 --chapter 1
+```
+
+**参数**:
+- `--id, -i`: 小说ID（必填）
+- `--chapter, -c`: 起始章节编号（可选）
+
+---
+
+#### 4. 风格管理
+
+##### `styles` - 列出所有风格
+显示所有可用的作家风格
+
+```bash
+python main.py styles
+```
+
+输出示例：
+```
+可用风格：
+- 金庸: 武侠风格，注重江湖恩怨和侠义精神
+- 刘慈欣: 硬科幻，宏大叙事，理性冷静
+- 东野圭吾: 推理悬疑，精密逻辑
+- 村上春树: 现代派，孤独感，魔幻现实
+- 莫言: 魔幻现实主义，乡土气息
+- 中性风格: 通用叙事风格
+```
+
+##### `style-info` - 查看风格详情
+查看特定风格的详细信息
+
+```bash
+python main.py style-info --style "刘慈欣"
+```
+
+**参数**:
+- `--style, -s`: 风格名称（必填）
+
+##### `recommend-style` - 推荐风格
+根据小说类型推荐合适的风格
+
+```bash
+python main.py recommend-style --genre "科幻"
+```
+
+**参数**:
+- `--genre, -g`: 小说类型（必填）
+
+---
+
+#### 5. 记忆系统
+
+##### `memory-stats` - 查看记忆统计
+显示小说的记忆系统统计信息
+
+```bash
+python main.py memory-stats --id novel_001
+```
+
+**参数**:
+- `--id, -i`: 小说ID（必填）
+
+输出示例：
+```
+记忆统计：
+- 角色记忆: 15 条
+- 情节记忆: 32 条
+- 章节记忆: 8 条
+- 向量总数: 156
+```
+
+##### `search-memory` - 搜索记忆
+在小说记忆中搜索相关内容
+
+```bash
+python main.py search-memory \
+  --id novel_001 \
+  --query "主角的性格特点" \
+  --type character
+```
+
+**参数**:
+- `--id, -i`: 小说ID（必填）
+- `--query, -q`: 搜索查询（必填）
+- `--type, -t`: 搜索类型，可选: character/plot/chapter（默认：all）
+
+---
+
+#### 6. 工具命令
+
+##### `version` - 显示版本
+显示系统版本信息
+
+```bash
+python main.py version
 ```
 
 

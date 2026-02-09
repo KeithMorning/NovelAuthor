@@ -28,9 +28,13 @@ class LocalEmbeddings:
         # 设置完全离线模式
         self._setup_offline_mode(cache_folder)
 
-        # 延迟加载模型（懒加载）
+        # 初始化模型变量
         self._model = None
         self._tokenizer = None
+        
+        # 立即加载模型（避免延迟加载时的环境问题）
+        # 这样可以确保模型在干净的执行环境中加载，避免 async/import 时序问题
+        self._load_model()
 
     def _setup_offline_mode(self, cache_folder: str = None):
         """
@@ -41,6 +45,8 @@ class LocalEmbeddings:
         os.environ['HF_HUB_OFFLINE'] = '1'  # HuggingFace Hub 离线模式
         os.environ['TRANSFORMERS_OFFLINE'] = '1'  # Transformers 离线模式
         os.environ['HF_DATASETS_OFFLINE'] = '1'  # Datasets 离线模式
+        os.environ['HF_HUB_DISABLE_TELEMETRY'] = '1'  # 禁用遥测
+        os.environ['HF_HUB_DISABLE_IMPLICIT_TOKEN'] = '1'  # 禁用隐式token
 
         # 禁用 telemetry 和更新检查
         os.environ['TOKENIZERS_PARALLELISM'] = 'false'
@@ -76,6 +82,7 @@ class LocalEmbeddings:
         """懒加载模型（只在首次使用时加载）"""
         import logging
         logger = logging.getLogger(__name__)
+        logger.setLevel(logging.DEBUG)
 
         if self._model is not None:
             logger.debug("模型已加载，跳过重复加载")
@@ -89,8 +96,12 @@ class LocalEmbeddings:
         logger.info("步骤 1: 设置离线模式环境变量")
         os.environ['HF_HUB_OFFLINE'] = '1'
         os.environ['TRANSFORMERS_OFFLINE'] = '1'
+        os.environ['HF_HUB_DISABLE_TELEMETRY'] = '1'  # 禁用遥测
+        os.environ['HF_HUB_DISABLE_IMPLICIT_TOKEN'] = '1'  # 禁用隐式token
         logger.info(f"  HF_HUB_OFFLINE = {os.environ.get('HF_HUB_OFFLINE')}")
         logger.info(f"  TRANSFORMERS_OFFLINE = {os.environ.get('TRANSFORMERS_OFFLINE')}")
+        logger.info(f"  HF_HUB_DISABLE_TELEMETRY = {os.environ.get('HF_HUB_DISABLE_TELEMETRY')}")
+        logger.info(f"  HF_HUB_DISABLE_IMPLICIT_TOKEN = {os.environ.get('HF_HUB_DISABLE_IMPLICIT_TOKEN')}")
 
         # 禁用 huggingface_hub 的日志，避免显示网络重试信息
         logger.info("步骤 2: 禁用 huggingface_hub 日志")
@@ -103,6 +114,25 @@ class LocalEmbeddings:
         retry_delay = 2  # 秒
 
         logger.info(f"步骤 3: 开始加载模型（最多重试 {max_retries} 次）")
+        
+        # CRITICAL: 在导入任何模块之前就应用 monkey patch
+        # 这样可以确保 transformers 库的所有检查都被禁用
+        logger.info("步骤 3.1: 应用 monkey patch 禁用 transformers 的网络检查")
+        try:
+            # 必须先导入模块才能 patch
+            import transformers.tokenization_utils_tokenizers as tok_utils
+            
+            def patched_is_base_mistral(model_id):
+                """总是返回 False，避免网络请求检查 Mistral 模型"""
+                logger.debug(f"  patched_is_base_mistral({model_id}) -> False (bypassed)")
+                return False
+            
+            # 覆盖原函数
+            tok_utils.is_base_mistral = patched_is_base_mistral
+            logger.info("  ✓ Monkey patch 应用成功，已禁用 is_base_mistral 网络检查")
+        except Exception as e:
+            logger.warning(f"  ! Monkey patch 失败: {e}")
+            logger.warning("  将继续尝试加载，但可能遇到网络错误")
 
         for attempt in range(max_retries):
             try:
@@ -118,19 +148,21 @@ class LocalEmbeddings:
                 logger.info(f"        模型名: {self.model_name}")
                 logger.info(f"        设备: cpu")
                 logger.info(f"        缓存目录: {os.environ.get('TRANSFORMERS_CACHE', 'default')}")
+                logger.info(f"        离线模式: local_files_only=True")
 
                 model_start = time.time()
 
-                # 根据 download_models.py 的成功经验：
-                # 只设置环境变量，不使用 local_files_only 参数
-                # 因为 sentence-transformers 在设置了 HF_HUB_OFFLINE 后会自动处理
+                logger.info("    [2] 创建 SentenceTransformer 实例")
                 self._model = SentenceTransformer(
                     self.model_name,
                     device='cpu',
                     cache_folder=os.environ.get('TRANSFORMERS_CACHE'),
                     trust_remote_code=False,
+                    local_files_only=True,  # 强制只使用本地文件，禁止任何网络请求
+                    backend='torch',  # 明确指定 backend，避免自动检测时的网络请求
+                    model_kwargs={'local_files_only': True},  # 确保底层 transformers 也使用本地文件
+                    tokenizer_kwargs={'local_files_only': True},  # 强制 tokenizer 也使用本地文件
                 )
-
                 model_time = time.time() - model_start
                 logger.info(f"    [2] 实例创建完成，耗时: {model_time:.3f}秒")
 
@@ -223,14 +255,10 @@ class LocalEmbeddings:
         logger.info(f"embed_documents: 开始编码 {len(texts)} 个文本")
         logger.debug(f"  文本长度: {[len(t) for t in texts[:3]]}{'...' if len(texts) > 3 else ''}")
 
-        # 懒加载模型
+        # 模型应该已经在 __init__ 中加载了
         if self._model is None:
-            logger.info("  模型未加载，触发懒加载...")
-            load_start = time.time()
+            logger.warning("  模型未加载（这不应该发生），尝试加载...")
             self._load_model()
-            logger.info(f"  模型加载完成，耗时: {time.time() - load_start:.3f}秒")
-        else:
-            logger.debug("  模型已加载，直接使用")
 
         # 生成嵌入
         logger.info("  开始调用 model.encode()...")

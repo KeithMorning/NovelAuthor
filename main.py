@@ -1,11 +1,28 @@
 """
 小说AI Agent - 主入口
 """
+import logging
+import sys
 import typer
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Prompt
 from pathlib import Path
+
+# 配置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+    handlers=[
+        logging.FileHandler('logs/main.log', mode='a', encoding='utf-8'),
+        logging.StreamHandler(sys.stderr)
+    ]
+)
+
+# 为关键模块启用 DEBUG 级别
+logging.getLogger('novel_ai_agent.memory').setLevel(logging.DEBUG)
+logging.getLogger('novel_ai_agent.memory.local_embeddings').setLevel(logging.DEBUG)
+logging.getLogger('novel_ai_agent.memory.vector_store').setLevel(logging.DEBUG)
 
 app = typer.Typer(help="小说AI Agent - 基于多Agent协作的AI小说创作系统")
 console = Console()
@@ -433,8 +450,8 @@ def polish(
         console.print(f"原始字数: {result['original_word_count']}")
         console.print(f"润色后字数: {result['polished_word_count']}")
 
-        # 更新小说
-        novel.add_chapter(polished_chapter)
+        # 更新小说（使用 update_chapter 而不是 add_chapter）
+        novel.update_chapter(polished_chapter)
         file_manager.save_novel_json(novel)
         file_manager.save_chapter_markdown(polished_chapter, novel_id)
 
