@@ -2,6 +2,8 @@
 写作Agent
 负责生成章节内容
 """
+import json
+from datetime import datetime
 from typing import Dict, Any, List, Optional
 from langchain_core.messages import HumanMessage, SystemMessage
 from .base_agent import BaseAgent
@@ -9,6 +11,7 @@ from ..models.chapter import Chapter, ChapterStatus
 from ..models.outline import Outline, ChapterPlan
 from ..models.character import Character
 from ..config.styles import get_style
+from ..utils.json_parser import extract_json_from_response
 from ..prompts.writing_prompts import (
     get_writing_system_prompt,
     get_chapter_writing_prompt,
@@ -25,6 +28,7 @@ class WriterAgent(BaseAgent):
     2. 应用指定的写作风格
     3. 保持角色和情节的一致性
     4. 根据反馈修改章节
+    5. 写完后提取结构化摘要（伏笔、角色状态等）
     """
 
     def __init__(self, style_name: str = "中性风格"):
@@ -86,8 +90,24 @@ class WriterAgent(BaseAgent):
                 chapter_plan.characters_involved
             )
 
-            # 准备前文摘要
-            previous_content = self._prepare_previous_content(previous_chapters)
+            # 准备前文摘要（含伏笔追踪）
+            previous_content = self._prepare_previous_content(
+                previous_chapters,
+                outline=outline,
+                current_chapter_num=chapter_plan.chapter_number
+            )
+
+            # 如果有详细规划，则整合到 prompt 中
+            chapter_summary = chapter_plan.summary
+            key_events = chapter_plan.key_events
+            if chapter_plan.detailed_plan:
+                # 使用细化后的梗概
+                chapter_summary = f"{chapter_plan.summary}\n\n详细展开: {chapter_plan.detailed_plan.detailed_summary}"
+                # 整合场景信息到关键事件中
+                detailed_events = []
+                for i, scene in enumerate(chapter_plan.detailed_plan.scenes, 1):
+                    detailed_events.append(f"场景{i}: {scene.description} (焦点: {scene.focus})")
+                key_events = detailed_events + key_events
 
             # 构建写作系统prompt
             system_prompt = get_writing_system_prompt(self.style.prompt_template)
@@ -96,12 +116,12 @@ class WriterAgent(BaseAgent):
             user_prompt = get_chapter_writing_prompt(
                 chapter_number=chapter_plan.chapter_number,
                 chapter_title=chapter_plan.title,
-                chapter_summary=chapter_plan.summary,
+                chapter_summary=chapter_summary,
                 target_words=chapter_plan.estimated_words,
                 story_background=story_background,
                 characters_info=characters_info,
                 previous_content=previous_content,
-                key_events=chapter_plan.key_events,
+                key_events=key_events,
                 style=self.style_name
             )
 
@@ -125,6 +145,21 @@ class WriterAgent(BaseAgent):
 
             # 更新字数统计
             chapter.update_word_count()
+
+            # 提取结构化摘要（伏笔、角色状态等）
+            try:
+                digest = await self._extract_chapter_digest(
+                    content, chapter_plan, previous_chapters
+                )
+                chapter.actual_summary = digest.get("actual_summary", "")
+                chapter.hooks_planted = digest.get("hooks_planted", [])
+                chapter.hooks_resolved = digest.get("hooks_resolved", [])
+                chapter.character_states = digest.get("character_states", {})
+                chapter.key_items = digest.get("key_items", [])
+                chapter.emotional_tone = digest.get("emotional_tone", "")
+            except Exception as e:
+                # 提取失败不影响核心功能，降级为使用大纲摘要
+                print(f"[WriterAgent] 结构化摘要提取失败（不影响核心功能）: {e}")
 
             return {
                 "status": "success",
@@ -178,16 +213,14 @@ class WriterAgent(BaseAgent):
             response = await self.llm.ainvoke(messages)
             new_content = response.content
 
-            # 创建新版本的Chapter
-            revised_chapter = Chapter(
-                number=chapter.number,
-                title=chapter.title,
-                summary=chapter.summary,
-                content=new_content,
-                status=ChapterStatus.REVIEWED,
-                version=chapter.version + 1,
-                notes=f"根据要求修改: {revision_requirements}"
-            )
+            # 创建新版本的Chapter（使用 model_copy 保留伏笔等结构化数据）
+            revised_chapter = chapter.model_copy(update={
+                "content": new_content,
+                "status": ChapterStatus.REVIEWED,
+                "version": chapter.version + 1,
+                "notes": f"根据要求修改: {revision_requirements}",
+                "updated_at": datetime.now()
+            })
 
             # 更新字数统计
             revised_chapter.update_word_count()
@@ -205,6 +238,91 @@ class WriterAgent(BaseAgent):
                 "message": f"修改章节时出错: {str(e)}",
                 "error": str(e)
             }
+
+    async def _extract_chapter_digest(
+        self,
+        content: str,
+        chapter_plan: ChapterPlan,
+        previous_chapters: Optional[List[Chapter]] = None
+    ) -> Dict[str, Any]:
+        """
+        从实际写完的章节内容中提取结构化摘要
+
+        用一次轻量级 LLM 调用提取：实际摘要、伏笔、角色状态等
+
+        Args:
+            content: 章节实际写出的内容
+            chapter_plan: 章节规划
+            previous_chapters: 前面的章节
+
+        Returns:
+            Dict: 结构化摘要
+        """
+        # 收集前文未解决的伏笔，供 LLM 判断本章是否回收了某些
+        unresolved_hooks = []
+        if previous_chapters:
+            all_resolved = set()
+            for ch in previous_chapters:
+                all_resolved.update(ch.hooks_resolved)
+            for ch in previous_chapters:
+                for hook in ch.hooks_planted:
+                    if hook not in all_resolved:
+                        unresolved_hooks.append(f"第{ch.number}章: {hook}")
+
+        unresolved_hooks_text = "\n".join(unresolved_hooks) if unresolved_hooks else "无"
+
+        prompt = f"""请从以下章节内容中提取结构化信息，以JSON格式返回。
+
+## 第{chapter_plan.chapter_number}章 {chapter_plan.title}
+
+### 章节内容（节选关键部分）
+{content[:3000]}
+
+### 前文尚未回收的伏笔
+{unresolved_hooks_text}
+
+### 请提取以下信息，返回JSON格式
+
+```json
+{{
+    "actual_summary": "本章实际发生了什么（2-3句话概括，不要照抄大纲）",
+    "hooks_planted": ["本章新埋下的伏笔或悬念（列出具体内容）"],
+    "hooks_resolved": ["本章回收了上面列出的哪些前文伏笔（原文匹配）"],
+    "character_states": {{"角色名": "状态描述"}},
+    "key_items": ["出现的关键道具、线索、地点"],
+    "emotional_tone": "本章结尾的情感基调"
+}}
+```
+
+注意：
+- character_states：**重点关注** 角色的生死、健康或位置变化。
+  - 如果角色死亡，必须标记为 "已死亡" 或 "Dead"。
+  - 如果角色重伤/离队，必须明确说明。
+  - 格式示例：{{"张强": "已死亡", "李薇": "右臂受伤", "主角": "获得关键密钥"}}
+- hooks_planted：只填本章新埋下的
+- hooks_resolved：只填本章回收的"""
+
+        messages = [
+            SystemMessage(content="你是一个专业的小说分析助手，擅长从章节内容中提取结构化信息。请严格按JSON格式返回。"),
+            HumanMessage(content=prompt)
+        ]
+
+        # 使用 JSON Output Mode 提高解析可靠性
+        json_llm = self._get_json_llm()
+        response = await json_llm.ainvoke(messages)
+
+        # 解析JSON
+        result = extract_json_from_response(response.content, "digest")
+
+        # 确保所有字段存在且类型正确
+        return {
+            "actual_summary": result.get("actual_summary", ""),
+            "hooks_planted": result.get("hooks_planted", []),
+            "hooks_resolved": result.get("hooks_resolved", []),
+            "character_states": result.get("character_states", {}),
+            "key_items": result.get("key_items", []),
+            "emotional_tone": result.get("emotional_tone", "")
+        }
 
     def _prepare_story_background(self, outline: Outline) -> str:
         """准备故事背景信息"""
@@ -245,25 +363,96 @@ class WriterAgent(BaseAgent):
 
     def _prepare_previous_content(
         self,
-        previous_chapters: Optional[List[Chapter]]
+        previous_chapters: Optional[List[Chapter]],
+        outline: Optional[Outline] = None,
+        current_chapter_num: int = 1
     ) -> str:
-        """准备前文内容摘要"""
+        """
+        准备前文内容摘要（含伏笔追踪、剧情大纲和角色状态）
+
+        构建结构：
+        1. 核心剧情线索（从大纲中提取当前相关的核心转折）
+        2. 待回收的伏笔（自动计算 planted - resolved）
+        3. 全部章节的实际摘要
+        4. 角色当前状态（最新章节）
+        5. 最近2章结尾片段（帮助衔接）
+        """
+        sections = []
+
+        # 1. 核心剧情线索
+        if outline and outline.plot_points:
+            relevant_points = []
+            for point in outline.plot_points:
+                # 尝试解析 chapter_range，如 "第1-5章"
+                try:
+                    range_str = point.chapter_range.replace("第", "").replace("章", "")
+                    if "-" in range_str:
+                        start, end = map(int, range_str.split("-"))
+                        # 如果该情节点涉及当前章节或之前章节，则包含进来
+                        if start <= current_chapter_num:
+                            relevant_points.append(f"- 【{point.name}】({point.chapter_range}): {point.description}")
+                    else:
+                        num = int(range_str)
+                        if num <= current_chapter_num:
+                            relevant_points.append(f"- 【{point.name}】(第{num}章): {point.description}")
+                except:
+                    # 解析失败则默认包含
+                    relevant_points.append(f"- 【{point.name}】: {point.description}")
+            
+            if relevant_points:
+                sections.append("【核心剧情线索】")
+                sections.extend(relevant_points)
+                sections.append("")
+
         if not previous_chapters:
-            return "这是第一章，无前文"
+            if not sections:
+                return "这是第一章，无前文"
+            return "\n".join(sections) + "\n这是第一章，开始创作之旅吧。"
 
-        # 取最近的1-2章
-        recent_chapters = previous_chapters[-2:] if len(previous_chapters) > 2 else previous_chapters
+        # 2. 全局伏笔追踪
+        all_unresolved_hooks = []
+        all_resolved = set()
+        for ch in previous_chapters:
+            all_resolved.update(ch.hooks_resolved)
+        for ch in previous_chapters:
+            for hook in ch.hooks_planted:
+                if hook not in all_resolved:
+                    all_unresolved_hooks.append(f"第{ch.number}章: {hook}")
 
-        summaries = []
-        for ch in recent_chapters:
-            summaries.append(f"第{ch.number}章 {ch.title}: {ch.summary}")
+        if all_unresolved_hooks:
+            sections.append("【待回收的伏笔】")
+            for hook in all_unresolved_hooks:
+                sections.append(f"- {hook}")
+            sections.append("")
 
-            # 如果有内容，取前300字作为摘要
+        # 3. 全部章节摘要
+        sections.append("【故事进展】")
+        for ch in previous_chapters:
+            summary = ch.actual_summary or ch.summary
+            sections.append(f"第{ch.number}章 {ch.title}: {summary}")
+        sections.append("")
+
+        # 4. 角色当前状态
+        latest_states = {}
+        for ch in previous_chapters:
+            latest_states.update(ch.character_states)
+        if latest_states:
+            sections.append("【角色当前状态】")
+            for name, state in latest_states.items():
+                sections.append(f"- {name}: {state}")
+            sections.append("")
+
+        # 5. 最近2章的详细内容
+        recent = previous_chapters[-2:]
+        sections.append("【最近章节详情】")
+        for ch in recent:
+            sections.append(f"第{ch.number}章 {ch.title}")
             if ch.content:
-                content_preview = ch.content[:300] + "..."
-                summaries.append(f"内容片段: {content_preview}")
+                tail = ch.content[-800:] if len(ch.content) > 800 else ch.content
+                sections.append(f"结尾片段: ...{tail}")
+            sections.append("")
 
-        return "\n\n".join(summaries)
+        return "\n".join(sections)
 
     def set_style(self, style_name: str):
         """

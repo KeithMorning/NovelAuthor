@@ -17,3 +17,4 @@ novel_ai_agent/data/
 .codelink
 /novel_ai_agent/output/*/**
 /frontend/node_modules
+/logs

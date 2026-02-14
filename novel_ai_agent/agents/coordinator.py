@@ -2,7 +2,8 @@
 协调Agent
 负责任务分发、流程编排和上下文管理
 """
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Callable
+import asyncio
 import uuid
 from datetime import datetime
 from .base_agent import BaseAgent
@@ -12,7 +13,7 @@ from .writer_agent import WriterAgent
 from ..models.novel import Novel
 from ..utils.file_manager import file_manager
 from ..memory import get_memory_manager
-from ..utils.logger import get_logger, WorkflowStep, NovelCreationLogger
+from ..utils.logger import get_logger, WorkflowStep, NovelCreationLogger, LogLevel
 
 
 class CoordinatorAgent(BaseAgent):
@@ -38,6 +39,7 @@ class CoordinatorAgent(BaseAgent):
         self.outline_agent: Optional[OutlineAgent] = None
         self.character_agent: Optional[CharacterAgent] = None
         self.writer_agent: Optional[WriterAgent] = None
+        self.logger = get_logger("Coordinator")
 
     async def execute(self, **kwargs):
         """
@@ -192,7 +194,8 @@ class CoordinatorAgent(BaseAgent):
 
             self.character_agent = CharacterAgent()
             char_result = await self.character_agent.generate_characters(
-                outline=novel.outline
+                outline=novel.outline,
+                chapter_count=chapter_count
             )
 
             if char_result["status"] != "success":
@@ -235,18 +238,19 @@ class CoordinatorAgent(BaseAgent):
                 }
             )
 
-            # 5. 加载到记忆系统
+            # 5. 加载到记忆系统 (暂时禁用,因为目前未使用)
+            # TODO: 当实现章节写作时的上下文检索功能后，再启用此步骤
             logger.step_start(
                 WorkflowStep.MEMORY_LOADING,
-                "加载到记忆系统"
+                "跳过记忆系统加载（当前未使用）"
             )
 
-            memory_manager = get_memory_manager(novel_id)
-            memory_manager.load_novel_to_memory(novel)
+            # memory_manager = get_memory_manager(novel_id)
+            # memory_manager.load_novel_to_memory(novel)
 
             logger.step_success(
                 WorkflowStep.MEMORY_LOADING,
-                "记忆系统加载成功"
+                "记忆系统加载已跳过（当前功能未启用）"
             )
 
             # 完成
@@ -287,10 +291,148 @@ class CoordinatorAgent(BaseAgent):
                 "novel_id": novel_id
             }
 
+    async def write_all_chapters_workflow(
+        self,
+        novel_id: str,
+        start_chapter: int = 1,
+        progress_callback=None,
+        enable_expansion: bool = True
+    ) -> Dict[str, Any]:
+        """
+        批量写作全部章节工作流
+
+        按顺序从 start_chapter 开始写作所有章节，跳过已完成的章节。
+        某章失败时停止并返回已完成的信息，支持通过 start_chapter 从断点恢复。
+
+        Args:
+            novel_id: 小说ID
+            start_chapter: 起始章节号（默认1）
+            progress_callback: 可选的进度回调函数，签名为 (chapter_number, total, status, message)
+
+        Returns:
+            Dict: 包含写作结果
+        """
+        try:
+            # 1. 加载小说
+            novel = file_manager.load_novel_json(novel_id)
+            if not novel:
+                return {
+                    "status": "error",
+                    "message": f"未找到小说: {novel_id}"
+                }
+
+            if not novel.outline or not novel.outline.chapters_plan:
+                return {
+                    "status": "error",
+                    "message": "小说没有大纲或章节规划，无法批量创作"
+                }
+
+            # 2. 确定需要写作的章节
+            total_chapters = len(novel.outline.chapters_plan)
+            written_numbers = {ch.number for ch in novel.chapters} if novel.chapters else set()
+
+            chapters_to_write = [
+                cp for cp in novel.outline.chapters_plan
+                if cp.chapter_number >= start_chapter and cp.chapter_number not in written_numbers
+            ]
+            chapters_to_write.sort(key=lambda x: x.chapter_number)
+
+            if not chapters_to_write:
+                return {
+                    "status": "success",
+                    "message": "所有章节已完成，无需写作",
+                    "novel_id": novel_id,
+                    "chapters_written": 0,
+                    "total_chapters": total_chapters
+                }
+
+            # 3. 逐章写作
+            completed = []
+            total_words = 0
+
+            for i, chapter_plan in enumerate(chapters_to_write):
+                chapter_num = chapter_plan.chapter_number
+
+                # 进度回调（支持同步和异步回调）
+                if progress_callback:
+                    cb_result = progress_callback(
+                        chapter_num, total_chapters,
+                        "writing",
+                        f"正在创作第{chapter_num}章: {chapter_plan.title}"
+                    )
+                    if asyncio.iscoroutine(cb_result):
+                        await cb_result
+
+                # 调用已有的单章写作工作流
+                result = await self.write_chapter_workflow(
+                    novel_id=novel_id,
+                    chapter_number=chapter_num,
+                    enable_expansion=enable_expansion
+                )
+
+                if result["status"] != "success":
+                    # 某章失败，停止并返回部分结果
+                    if progress_callback:
+                        cb_result = progress_callback(
+                            chapter_num, total_chapters,
+                            "error",
+                            f"第{chapter_num}章创作失败: {result.get('message', '未知错误')}"
+                        )
+                        if asyncio.iscoroutine(cb_result):
+                            await cb_result
+
+                    return {
+                        "status": "partial",
+                        "message": f"第{chapter_num}章创作失败: {result.get('message', '')}。已完成 {len(completed)}/{len(chapters_to_write)} 章。",
+                        "novel_id": novel_id,
+                        "chapters_written": len(completed),
+                        "chapters_completed": completed,
+                        "total_chapters": total_chapters,
+                        "total_words": total_words,
+                        "failed_chapter": chapter_num,
+                        "error": result.get("error", "")
+                    }
+
+                # 记录完成
+                chapter = result["chapter"]
+                completed.append({
+                    "number": chapter_num,
+                    "title": chapter.title,
+                    "word_count": chapter.word_count
+                })
+                total_words += chapter.word_count
+
+                if progress_callback:
+                    cb_result = progress_callback(
+                        chapter_num, total_chapters,
+                        "done",
+                        f"第{chapter_num}章完成: {chapter.title} ({chapter.word_count}字)"
+                    )
+                    if asyncio.iscoroutine(cb_result):
+                        await cb_result
+
+            return {
+                "status": "success",
+                "message": f"全部 {len(completed)} 章创作完成！总字数: {total_words}",
+                "novel_id": novel_id,
+                "chapters_written": len(completed),
+                "chapters_completed": completed,
+                "total_chapters": total_chapters,
+                "total_words": total_words
+            }
+
+        except Exception as e:
+            return {
+                "status": "error",
+                "message": f"批量创作时出错: {str(e)}",
+                "error": str(e)
+            }
+
     async def write_chapter_workflow(
         self,
         novel_id: str,
-        chapter_number: int
+        chapter_number: int,
+        enable_expansion: bool = True
     ) -> Dict[str, Any]:
         """
         章节写作工作流
@@ -332,11 +474,66 @@ class CoordinatorAgent(BaseAgent):
                     "message": f"未找到第{chapter_number}章的规划"
                 }
 
-            # 3. 获取前面的章节
+            # 4. 获取前面的章节 (提前获取以构建上下文)
             previous_chapters = [ch for ch in novel.chapters if ch.number < chapter_number]
             previous_chapters.sort(key=lambda x: x.number)
 
-            # 4. 创作章节
+            # 3. 检查是否需要细化章节规划
+            if enable_expansion and not chapter_plan.detailed_plan:
+                self.logger.log(
+                    level=LogLevel.INFO,
+                    step=WorkflowStep.CHAPTER_WRITING,
+                    message=f"正在细化第{chapter_number}章的规划..."
+                )
+                
+                # 构建故事上下文
+                story_context = {
+                    "world_state": {},
+                    "recent_history": []
+                }
+                
+                if previous_chapters:
+                    # 提取世界状态
+                    latest_states = {}
+                    for ch in previous_chapters:
+                        if ch.character_states:
+                            latest_states.update(ch.character_states)
+                    story_context["world_state"] = latest_states
+                    
+                    # 提取最近章节摘要（取出最近5章）
+                    recent_chapters = previous_chapters[-5:]
+                    story_context["recent_history"] = [
+                        {
+                            "number": ch.number, 
+                            "title": ch.title, 
+                            "summary": ch.actual_summary or ch.summary
+                        } 
+                        for ch in recent_chapters
+                    ]
+
+                self.outline_agent = OutlineAgent()
+                expand_result = await self.outline_agent.expand_chapter_plan(
+                    outline=novel.outline,
+                    chapter_number=chapter_number,
+                    story_context=story_context  # 传入上下文
+                )
+                if expand_result["status"] == "success":
+                    chapter_plan.detailed_plan = expand_result["detailed_plan"]
+                    # 保存细化后的规划
+                    file_manager.save_novel_json(novel)
+                    self.logger.log(
+                        level=LogLevel.SUCCESS,
+                        step=WorkflowStep.CHAPTER_WRITING,
+                        message=f"第{chapter_number}章规划细化完成"
+                    )
+                else:
+                    self.logger.log(
+                        level=LogLevel.WARNING,
+                        step=WorkflowStep.CHAPTER_WRITING,
+                        message=f"细化章节规划失败，将使用原始规划: {expand_result.get('message')}"
+                    )
+
+            # 5. 创作章节
             self.writer_agent = WriterAgent(style_name=novel.author_style)
             write_result = await self.writer_agent.write_chapter(
                 chapter_plan=chapter_plan,

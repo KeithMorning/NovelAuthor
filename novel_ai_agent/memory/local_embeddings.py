@@ -2,6 +2,12 @@
 本地 Embedding 实现
 完全离线运行，避免 HuggingFace Hub 网络依赖
 """
+# ⚠️ 必须在最开始导入补丁，避免后续的 transformers 导入出问题
+try:
+    from novel_ai_agent.memory import embedding_patch  # noqa: F401
+except ImportError:
+    pass  # 如果导入失败，继续执行
+
 import os
 import time
 from pathlib import Path
@@ -23,23 +29,33 @@ class LocalEmbeddings:
             model_name: 模型名称（可选）
             cache_folder: 本地缓存目录（可选）
         """
-        self.model_name = model_name or "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+        import logging
+        logger = logging.getLogger(__name__)
 
-        # 设置完全离线模式
-        self._setup_offline_mode(cache_folder)
+        self.model_name = model_name or "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 
         # 初始化模型变量
         self._model = None
         self._tokenizer = None
-        
+        self._loading = False  # 防止重复加载的标志
+
+        # 设置完全离线模式
+        self._setup_offline_mode(cache_folder)
+
         # 立即加载模型（避免延迟加载时的环境问题）
         # 这样可以确保模型在干净的执行环境中加载，避免 async/import 时序问题
+        logger.debug(f"LocalEmbeddings.__init__ 开始加载模型 (id={id(self)})")
         self._load_model()
+        logger.debug(f"LocalEmbeddings.__init__ 模型加载完成 (id={id(self)})")
 
     def _setup_offline_mode(self, cache_folder: str = None):
         """
         配置完全离线模式
         """
+        # ⚠️ 关键修复：在导入任何库之前就应用 monkey patch
+        # 必须在这里执行，而不是在 _load_model 中，因为环境变量要在导入前设置
+        self._apply_transformers_patch()
+
         # 1. 设置环境变量，禁用网络
         # 这些环境变量必须在导入 sentence_transformers 之前设置
         os.environ['HF_HUB_OFFLINE'] = '1'  # HuggingFace Hub 离线模式
@@ -78,15 +94,31 @@ class LocalEmbeddings:
         self.model_cache_path = model_path
         print(f"✓ 使用本地缓存模型: {model_path}")
 
+    def _apply_transformers_patch(self):
+        """
+        应用 transformers 补丁（已在模块导入时通过 embedding_patch.py 完成）
+        这里保留方法是为了兼容性
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.debug("_apply_transformers_patch: 补丁已在模块导入时应用")
+
     def _load_model(self):
         """懒加载模型（只在首次使用时加载）"""
         import logging
         logger = logging.getLogger(__name__)
         logger.setLevel(logging.DEBUG)
 
+        # 防止重复加载
         if self._model is not None:
             logger.debug("模型已加载，跳过重复加载")
             return
+
+        if self._loading:
+            logger.warning("检测到重复加载请求，正在加载中...")
+            return
+
+        self._loading = True
 
         logger.info("="*60)
         logger.info("开始加载 Embedding 模型")
@@ -114,25 +146,9 @@ class LocalEmbeddings:
         retry_delay = 2  # 秒
 
         logger.info(f"步骤 3: 开始加载模型（最多重试 {max_retries} 次）")
-        
-        # CRITICAL: 在导入任何模块之前就应用 monkey patch
-        # 这样可以确保 transformers 库的所有检查都被禁用
-        logger.info("步骤 3.1: 应用 monkey patch 禁用 transformers 的网络检查")
-        try:
-            # 必须先导入模块才能 patch
-            import transformers.tokenization_utils_tokenizers as tok_utils
-            
-            def patched_is_base_mistral(model_id):
-                """总是返回 False，避免网络请求检查 Mistral 模型"""
-                logger.debug(f"  patched_is_base_mistral({model_id}) -> False (bypassed)")
-                return False
-            
-            # 覆盖原函数
-            tok_utils.is_base_mistral = patched_is_base_mistral
-            logger.info("  ✓ Monkey patch 应用成功，已禁用 is_base_mistral 网络检查")
-        except Exception as e:
-            logger.warning(f"  ! Monkey patch 失败: {e}")
-            logger.warning("  将继续尝试加载，但可能遇到网络错误")
+
+        # Monkey patch 已在 _setup_offline_mode 中提前应用
+        logger.info("步骤 3.1: Monkey patch 已在初始化时应用")
 
         for attempt in range(max_retries):
             try:
@@ -170,6 +186,7 @@ class LocalEmbeddings:
                 logger.info(success_msg)
                 logger.info("="*60)
 
+                self._loading = False  # 标记加载完成
                 return  # 成功，退出函数
 
             except Exception as e:
@@ -204,6 +221,7 @@ class LocalEmbeddings:
                     continue
                 else:
                     # 最后一次尝试失败，或者是非网络错误
+                    self._loading = False  # 加载失败，重置标志
                     logger.error("="*60)
                     logger.error("模型加载最终失败")
                     logger.error("="*60)
@@ -350,27 +368,52 @@ class FallbackEmbeddings:
         return self.embed_documents([text])[0]
 
 
-def get_local_embeddings(use_fallback: bool = False) -> object:
+# 全局单例，避免重复创建
+_local_embeddings_instance = None
+_local_embeddings_lock = None
+
+
+def get_local_embeddings(use_fallback: bool = False, force_new: bool = False) -> object:
     """
-    获取本地 Embedding 实例
+    获取本地 Embedding 实例（单例模式）
 
     Args:
         use_fallback: 如果为 True，在主方案失败时使用 TF-IDF 后备方案
+        force_new: 如果为 True，强制创建新实例（用于测试）
 
     Returns:
         Embedding 实例
     """
-    try:
-        # 尝试使用完全本地的 sentence-transformers
-        embeddings = LocalEmbeddings()
-        return embeddings
-    except RuntimeError as e:
-        if use_fallback:
-            print(f"⚠️  主 Embedding 方案不可用，使用 TF-IDF 后备方案")
-            print(f"   原因: {str(e)}")
-            return FallbackEmbeddings()
-        else:
-            raise
+    import logging
+    import threading
+
+    logger = logging.getLogger(__name__)
+
+    global _local_embeddings_instance, _local_embeddings_lock
+
+    if _local_embeddings_lock is None:
+        _local_embeddings_lock = threading.Lock()
+
+    with _local_embeddings_lock:
+        if _local_embeddings_instance is not None and not force_new:
+            logger.debug(f"返回已存在的 LocalEmbeddings 实例 (id={id(_local_embeddings_instance)})")
+            return _local_embeddings_instance
+
+        try:
+            logger.debug("创建新的 LocalEmbeddings 实例")
+            # 尝试使用完全本地的 sentence-transformers
+            embeddings = LocalEmbeddings()
+            _local_embeddings_instance = embeddings
+            return embeddings
+        except RuntimeError as e:
+            if use_fallback:
+                print(f"⚠️  主 Embedding 方案不可用，使用 TF-IDF 后备方案")
+                print(f"   原因: {str(e)}")
+                fallback = FallbackEmbeddings()
+                _local_embeddings_instance = fallback
+                return fallback
+            else:
+                raise
 
 
 if __name__ == "__main__":

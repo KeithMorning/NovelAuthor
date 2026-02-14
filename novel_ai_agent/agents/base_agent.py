@@ -93,6 +93,31 @@ class BaseAgent(ABC):
                 f"支持的提供商: anthropic, openai, deepseek, azure"
             )
 
+    @property
+    def _supports_json_mode(self) -> bool:
+        """检查当前 LLM provider 是否支持 JSON Output Mode"""
+        return self.settings.llm_provider.lower() in ("deepseek", "openai", "azure")
+
+    def _get_json_llm(self) -> BaseChatModel:
+        """
+        获取启用了 JSON Output Mode 的 LLM 实例
+
+        对于支持 response_format 的 provider（DeepSeek、OpenAI、Azure），
+        使用 .bind() 绑定 response_format={"type": "json_object"}。
+        对于不支持的 provider（如 Anthropic），返回普通 LLM（由 prompt + json_parser 兜底）。
+
+        注意：使用 JSON Mode 时，prompt 中必须包含 "json" 字样和格式示例。
+
+        Returns:
+            BaseChatModel: JSON 模式的 LLM 实例
+        """
+        if self._supports_json_mode:
+            return self.llm.bind(
+                response_format={"type": "json_object"}
+            )
+        # Anthropic 不支持 response_format，回退到普通 LLM
+        return self.llm
+
     @abstractmethod
     async def execute(self, **kwargs):
         """

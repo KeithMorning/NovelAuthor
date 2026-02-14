@@ -24,7 +24,8 @@ EDITOR_SYSTEM_PROMPT = """你是一位专业的小说编辑，拥有丰富的文
 def get_polish_prompt(
     content: str,
     style: str,
-    focus_areas: list = None
+    focus_areas: list = None,
+    user_requirements: str = ""
 ) -> str:
     """
     生成润色章节的prompt
@@ -33,6 +34,7 @@ def get_polish_prompt(
         content: 原始章节内容
         style: 写作风格
         focus_areas: 重点关注的方面（可选）
+        user_requirements: 用户自定义修订要求（可选）
 
     Returns:
         str: 格式化的prompt
@@ -41,11 +43,15 @@ def get_polish_prompt(
     if focus_areas:
         focus_text = f"\n重点关注以下方面：\n" + "\n".join(f"- {area}" for area in focus_areas)
 
+    requirements_text = ""
+    if user_requirements:
+        requirements_text = f"\n**用户修订要求**（请务必按照以下要求进行修改）：\n{user_requirements}\n"
+
     return f"""请对以下章节内容进行润色和优化。
 
 **写作风格**: {style}
 {focus_text}
-
+{requirements_text}
 **原始内容**:
 {content}
 
@@ -56,6 +62,7 @@ def get_polish_prompt(
 4. 优化句式结构，使叙事更流畅
 5. 保持或强化指定的写作风格
 6. 不要添加新的情节或角色
+7. 【重点】清理AI式写作痕迹：消除排比对仗、定义式总结、报告体推演、术语堆砌、模式化收束等AI特有句式
 
 请直接输出润色后的完整内容，不需要额外的说明或注释。
 """
@@ -162,7 +169,8 @@ def get_comprehensive_review_prompt(
     style: str,
     characters: str,
     outline_summary: str,
-    previous_context: str = ""
+    previous_context: str = "",
+    user_requirements: str = ""
 ) -> str:
     """
     生成综合评审的prompt
@@ -173,6 +181,7 @@ def get_comprehensive_review_prompt(
         characters: 角色信息
         outline_summary: 大纲摘要
         previous_context: 前文上下文
+        user_requirements: 用户自定义评审要求（可选）
 
     Returns:
         str: 格式化的prompt
@@ -181,6 +190,10 @@ def get_comprehensive_review_prompt(
     if previous_context:
         context_text = f"\n**前文上下文**:\n{previous_context}\n"
 
+    requirements_text = ""
+    if user_requirements:
+        requirements_text = f"\n**用户特别关注**（请在评审中重点评估以下方面）：\n{user_requirements}\n"
+
     return f"""请对以下章节进行全面评审，包括：
 1. 文字质量：语法、用词、句式
 2. 风格一致性：是否符合指定风格
@@ -188,6 +201,7 @@ def get_comprehensive_review_prompt(
 4. 角色一致性：是否符合人设
 5. 叙事节奏：节奏是否合适
 6. 情感表达：情感是否到位
+7. AI痕迹检测：是否存在排比对仗、概括定义句、推演报告体、百分比结论、术语堆砌、模式化收束升华等AI式写作痕迹
 
 **写作风格**: {style}
 
@@ -210,7 +224,8 @@ def get_comprehensive_review_prompt(
     "plot_logic": 8.5,
     "character_consistency": 9.0,
     "pacing": 8.0,
-    "emotional_impact": 8.5
+    "emotional_impact": 8.5,
+    "anti_ai_naturalness": 8.5
   }},
   "strengths": ["优点1", "优点2", "优点3"],
   "weaknesses": ["缺点1", "缺点2"],
@@ -220,7 +235,8 @@ def get_comprehensive_review_prompt(
     "plot_logic": "详细反馈",
     "character_consistency": "详细反馈",
     "pacing": "详细反馈",
-    "emotional_impact": "详细反馈"
+    "emotional_impact": "详细反馈",
+    "anti_ai_naturalness": "详细反馈"
   }},
   "revision_suggestions": [
     {{

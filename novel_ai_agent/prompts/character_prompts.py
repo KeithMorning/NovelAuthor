@@ -10,11 +10,14 @@ CHARACTER_SYSTEM_PROMPT = """你是一位专业的角色设计师，擅长创造
 3. 构建角色之间的关系网络
 4. 设计角色的发展弧线
 
+12. **确保角色命名的区分度**：避免名字发音或字形过于相近，确保每个角色有独特的辨识度。
+
 输出要求：
 - 使用YAML格式输出（更适合多行文本，不需要转义引号）
 - 角色要有鲜明的个性特征
 - 角色动机要合理且能推动情节
 - 角色关系要清晰且有冲突张力
+- **角色命名规范**：禁止出现名字过于接近的情况（如：林风、林云；张三、张山），姓名起首字应尽量不同，姓名长度可适当交错。
 """
 
 CHARACTER_GENERATION_PROMPT = """请根据以下小说信息创建角色设定：
@@ -24,12 +27,19 @@ CHARACTER_GENERATION_PROMPT = """请根据以下小说信息创建角色设定�
 - 类型: {genre}
 - 故事简介: {summary}
 - 主题: {theme}
+- 目标章节数: {chapter_count}
 
 **大纲要点**:
 {outline_key_points}
 
 **角色需求**:
 {character_requirements}
+
+**命名约束 (非常重要)**:
+1. **去重与差异化**: 每个角色的姓氏和名字首字应尽量不同，避免视觉和听觉上的混淆。
+2. **长短错落**: 姓名长度可以根据角色身份进行区分（如：单名、双名、外文译名交替使用）。
+3. **风格契合**: 针对{genre}类型，采用既符合类型特色又具有个人辨识度的名字，避免过分大众化或同质化的科幻/玄幻词汇。
+4. **禁止模式**: 禁止使用共享前缀（如“星X”、“天X”）或尾音相近的组合。
 
 请创建以下角色（以YAML格式输出）：
 
@@ -79,7 +89,7 @@ characters:
     arc: 角色发展弧线
 ```
 
-请至少创建3-5个主要角色（根据故事需要）。
+{character_count_guide}
 """
 
 CHARACTER_REFINEMENT_PROMPT = """请完善以下角色设定：
@@ -113,13 +123,45 @@ CHARACTER_RELATIONSHIP_PROMPT = """请为以下角色构建关系网络：
 以JSON格式输出，为每个角色添加或更新relationships字段。
 """
 
+def _get_character_count_guide(chapter_count: int) -> str:
+    """
+    根据章节数计算推荐角色数量区间
+
+    Args:
+        chapter_count: 目标章节数
+
+    Returns:
+        str: 角色数量建议文本
+    """
+    if chapter_count <= 5:
+        min_chars, max_chars = 3, 5
+        desc = "短篇小说，角色精简"
+    elif chapter_count <= 12:
+        min_chars, max_chars = 5, 8
+        desc = "中篇小说，需要足够的配角来支撑多条情节线"
+    elif chapter_count <= 20:
+        min_chars, max_chars = 7, 12
+        desc = "长篇小说，需要丰富的角色网络来推动复杂情节"
+    else:
+        min_chars, max_chars = 10, 15
+        desc = "大长篇小说，多线叙事需要充足的角色阵容"
+
+    return (
+        f"本小说共{chapter_count}章，属于{desc}。\n"
+        f"请创建 **{min_chars}-{max_chars}个角色**（包括主角、重要配角、配角、反派等），"
+        f"确保角色数量足以支撑故事的丰富度和节奏感。\n"
+        f"角色应有明确的分工：主角1-2个、重要配角若干、功能型配角若干、反派/对手至少1个。"
+    )
+
+
 def get_character_generation_prompt(
     title: str,
     genre: str,
     summary: str,
     theme: str,
     outline_key_points: str,
-    character_requirements: str = ""
+    character_requirements: str = "",
+    chapter_count: int = 20
 ) -> str:
     """
     获取角色生成prompt
@@ -131,17 +173,22 @@ def get_character_generation_prompt(
         theme: 主题
         outline_key_points: 大纲要点
         character_requirements: 用户对角色的特殊要求
+        chapter_count: 目标章节数
 
     Returns:
         str: 格式化的prompt
     """
+    character_count_guide = _get_character_count_guide(chapter_count)
+
     return CHARACTER_GENERATION_PROMPT.format(
         title=title,
         genre=genre,
         summary=summary,
         theme=theme,
+        chapter_count=chapter_count,
         outline_key_points=outline_key_points,
-        character_requirements=character_requirements or "无特殊要求，请根据故事需要创建合适的角色"
+        character_requirements=character_requirements or "无特殊要求，请根据故事需要创建合适的角色",
+        character_count_guide=character_count_guide
     )
 
 def get_character_refinement_prompt(

@@ -7,7 +7,7 @@ from typing import Dict, Any
 from datetime import datetime
 
 from novel_ai_agent.api.schemas.requests import (
-    WriteChapterRequest, PolishChapterRequest, ReviewChapterRequest
+    WriteChapterRequest, WriteAllChaptersRequest, PolishChapterRequest, ReviewChapterRequest
 )
 from novel_ai_agent.api.schemas.responses import ChapterContent, ReviewResult, ApiResponse
 from novel_ai_agent.utils.file_manager import file_manager
@@ -117,6 +117,90 @@ async def write_chapter(request: WriteChapterRequest, background_tasks: Backgrou
         raise HTTPException(status_code=500, detail=f"写作章节失败: {str(e)}")
 
 
+@router.post("/write-all", response_model=ApiResponse)
+async def write_all_chapters(request: WriteAllChaptersRequest, background_tasks: BackgroundTasks) -> ApiResponse:
+    """
+    批量写作全部章节
+    这是一个异步操作，会在后台按顺序写作所有章节
+    """
+    try:
+        novel = file_manager.load_novel_json(request.novel_id)
+
+        if not novel:
+            raise HTTPException(status_code=404, detail=f"小说 {request.novel_id} 不存在")
+
+        if not novel.outline or not novel.outline.chapters_plan:
+            raise HTTPException(status_code=400, detail="小说没有大纲或章节规划")
+
+        from novel_ai_agent.agents.coordinator import CoordinatorAgent
+        coordinator = CoordinatorAgent()
+
+        async def write_all_task():
+            try:
+                await ws_manager.broadcast_to_novel({
+                    "type": "task_start",
+                    "task_type": "write_all_chapters",
+                    "novel_id": request.novel_id,
+                    "message": "开始批量写作全部章节..."
+                }, request.novel_id)
+
+                async def progress_callback(chapter_num, total, status, message):
+                    await ws_manager.send_progress_update(
+                        request.novel_id,
+                        "write_all_chapters",
+                        int(chapter_num / total * 100) if total > 0 else 0,
+                        message
+                    )
+
+                result = await coordinator.write_all_chapters_workflow(
+                    novel_id=request.novel_id,
+                    start_chapter=request.start_chapter,
+                    progress_callback=progress_callback
+                )
+
+                if result["status"] in ("success", "partial"):
+                    await ws_manager.send_task_complete(
+                        request.novel_id,
+                        "write_all_chapters",
+                        {
+                            "chapters_written": result.get("chapters_written", 0),
+                            "total_words": result.get("total_words", 0),
+                            "status": result["status"]
+                        }
+                    )
+                else:
+                    raise Exception(result.get("message", "未知错误"))
+
+            except Exception as e:
+                print(f"批量写作失败: {str(e)}")
+                await ws_manager.send_task_error(
+                    request.novel_id,
+                    "write_all_chapters",
+                    str(e)
+                )
+
+        background_tasks.add_task(write_all_task)
+
+        total_chapters = len(novel.outline.chapters_plan)
+        written = len(novel.chapters) if novel.chapters else 0
+
+        return ApiResponse(
+            success=True,
+            message=f"批量写作任务已启动，将从第{request.start_chapter}章开始",
+            data={
+                "novel_id": request.novel_id,
+                "start_chapter": request.start_chapter,
+                "total_chapters": total_chapters,
+                "already_written": written
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"批量写作失败: {str(e)}")
+
+
 @router.post("/polish", response_model=ApiResponse)
 async def polish_chapter(request: PolishChapterRequest, background_tasks: BackgroundTasks) -> ApiResponse:
     """
@@ -143,19 +227,35 @@ async def polish_chapter(request: PolishChapterRequest, background_tasks: Backgr
                     f"开始润色第{request.chapter_number}章..."
                 )
 
-                result = editor.polish_chapter(
-                    request.novel_id,
-                    request.chapter_number,
-                    focus=request.focus
-                )
-                print(f"章节 {request.chapter_number} 润色完成")
+                # 获取目标章节
+                target_chapter = novel.get_chapter(request.chapter_number)
+                if not target_chapter:
+                    raise Exception(f"未找到第{request.chapter_number}章")
 
-                # 发送完成通知
-                await ws_manager.send_task_complete(
-                    request.novel_id,
-                    "polish_chapter",
-                    {"chapter_number": request.chapter_number}
+                result = await editor.polish_chapter(
+                    chapter=target_chapter,
+                    style=novel.author_style,
+                    focus_areas=[f.strip() for f in request.focus.split(",")] if request.focus else None,
+                    user_requirements=request.requirements or ""
                 )
+                
+                if result["status"] == "success":
+                    polished_chapter = result["chapter"]
+                    # 更新并保存
+                    novel.update_chapter(polished_chapter)
+                    file_manager.save_novel_json(novel)
+                    file_manager.save_chapter_markdown(polished_chapter, request.novel_id)
+                    print(f"章节 {request.chapter_number} 润色完成")
+
+                    # 发送完成通知
+                    await ws_manager.send_task_complete(
+                        request.novel_id,
+                        "polish_chapter",
+                        {"chapter_number": request.chapter_number}
+                    )
+                else:
+                    raise Exception(result.get("message", "润色失败"))
+
             except Exception as e:
                 print(f"章节润色失败: {str(e)}")
                 await ws_manager.send_task_error(
@@ -172,7 +272,8 @@ async def polish_chapter(request: PolishChapterRequest, background_tasks: Backgr
             data={
                 "novel_id": request.novel_id,
                 "chapter_number": request.chapter_number,
-                "focus": request.focus
+                "focus": request.focus,
+                "requirements": request.requirements
             }
         )
 
@@ -194,20 +295,39 @@ async def review_chapter(request: ReviewChapterRequest) -> ReviewResult:
         if not novel:
             raise HTTPException(status_code=404, detail=f"小说 {request.novel_id} 不存在")
 
+        target_chapter = novel.get_chapter(request.chapter_number)
+        if not target_chapter:
+            raise HTTPException(status_code=404, detail=f"未找到第{request.chapter_number}章")
+
         from novel_ai_agent.agents.editor_agent import EditorAgent
         editor = EditorAgent()
 
+        # 获取前文
+        previous_chapters = [ch for ch in novel.chapters if ch.number < request.chapter_number]
+
         # 执行评审
-        result = editor.comprehensive_review(request.novel_id, request.chapter_number)
+        result = await editor.comprehensive_review(
+            chapter=target_chapter,
+            style=novel.author_style,
+            characters=novel.characters,
+            outline=novel.outline,
+            previous_chapters=previous_chapters if previous_chapters else None,
+            user_requirements=request.requirements or ""
+        )
+
+        if result["status"] != "success":
+            raise HTTPException(status_code=500, detail=result.get("message", "评审失败"))
+
+        review_result = result["review"]
 
         return ReviewResult(
             novel_id=request.novel_id,
             chapter_number=request.chapter_number,
-            score=result.get("score", 0),
-            strengths=result.get("strengths", []),
-            weaknesses=result.get("weaknesses", []),
-            suggestions=result.get("suggestions", []),
-            overall_comment=result.get("overall_comment", "")
+            score=review_result.get("overall_score", 0),
+            strengths=review_result.get("strengths", []),
+            weaknesses=review_result.get("weaknesses", []),
+            suggestions=review_result.get("revision_suggestions", []),
+            overall_comment=review_result.get("summary", "")
         )
 
     except HTTPException:

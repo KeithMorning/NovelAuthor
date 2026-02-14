@@ -2,7 +2,7 @@
 大纲数据模型
 """
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import List, Optional, Dict
 from datetime import datetime
 
 
@@ -15,6 +15,22 @@ class PlotPoint(BaseModel):
     importance: str = Field(..., description="重要性: 高/中/低")
 
 
+class Scene(BaseModel):
+    """场景模型"""
+    description: str = Field(..., description="场景描述")
+    focus: str = Field(..., description="场景焦点")
+    characters: List[str] = Field(default_factory=list, description="涉及角色")
+
+
+class DetailedChapterPlan(BaseModel):
+    """详细章节规划模型"""
+    detailed_summary: str = Field(..., description="详细章节梗概")
+    scenes: List[Scene] = Field(default_factory=list, description="场景列表")
+    emotional_tone: str = Field(..., description="情感基调")
+    key_dialogues: List[str] = Field(default_factory=list, description="关键对话或动作点")
+    transitions: Dict[str, str] = Field(default_factory=dict, description="与前后章的衔接点")
+
+
 class ChapterPlan(BaseModel):
     """章节规划模型"""
 
@@ -24,6 +40,7 @@ class ChapterPlan(BaseModel):
     key_events: List[str] = Field(default_factory=list, description="关键事件列表")
     characters_involved: List[str] = Field(default_factory=list, description="涉及角色")
     estimated_words: int = Field(3000, description="预计字数")
+    detailed_plan: Optional[DetailedChapterPlan] = Field(None, description="详细章节规划")
 
 
 class Outline(BaseModel):

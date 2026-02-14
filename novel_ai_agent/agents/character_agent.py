@@ -58,6 +58,7 @@ class CharacterAgent(BaseAgent):
         self,
         outline: Outline,
         character_requirements: str = "",
+        chapter_count: int = 0,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -66,11 +67,16 @@ class CharacterAgent(BaseAgent):
         Args:
             outline: 故事大纲
             character_requirements: 用户对角色的特殊要求
+            chapter_count: 目标章节数，0则从大纲自动推断
 
         Returns:
             Dict: 包含生成的Character对象列表
         """
         try:
+            # 如果未指定章节数，从大纲推断
+            if chapter_count <= 0:
+                chapter_count = len(outline.chapters_plan) if outline.chapters_plan else 20
+
             # 提取大纲关键信息
             outline_key_points = self._extract_outline_key_points(outline)
 
@@ -81,7 +87,8 @@ class CharacterAgent(BaseAgent):
                 summary=outline.summary,
                 theme=outline.theme,
                 outline_key_points=outline_key_points,
-                character_requirements=character_requirements
+                character_requirements=character_requirements,
+                chapter_count=chapter_count
             )
 
             # 调用LLM

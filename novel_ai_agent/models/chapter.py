@@ -2,7 +2,7 @@
 章节数据模型
 """
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Dict, List, Optional
 from datetime import datetime
 from enum import Enum
 
@@ -27,6 +27,14 @@ class Chapter(BaseModel):
     notes: Optional[str] = Field(None, description="备注或修改说明")
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
+
+    # 结构化回顾（写完后由 LLM 从实际内容提取）
+    actual_summary: Optional[str] = Field(None, description="实际内容摘要（从写完的内容中提取）")
+    hooks_planted: List[str] = Field(default_factory=list, description="本章埋下的伏笔/悬念")
+    hooks_resolved: List[str] = Field(default_factory=list, description="本章回收的前文伏笔")
+    character_states: Dict[str, str] = Field(default_factory=dict, description="角色在本章结束时的状态")
+    key_items: List[str] = Field(default_factory=list, description="出现的关键道具/线索")
+    emotional_tone: Optional[str] = Field(None, description="本章结尾的情感基调")
 
     def update_word_count(self):
         """更新字数统计 (统计中文字符)"""

@@ -42,18 +42,35 @@ class WriteChapterRequest(BaseModel):
     }
 
 
+class WriteAllChaptersRequest(BaseModel):
+    """批量写作全部章节请求"""
+    novel_id: str = Field(..., description="小说ID")
+    start_chapter: int = Field(1, description="起始章节号", ge=1)
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "novel_id": "novel_abc123",
+                "start_chapter": 1
+            }
+        }
+    }
+
+
 class PolishChapterRequest(BaseModel):
     """润色章节请求"""
     novel_id: str = Field(..., description="小说ID")
     chapter_number: int = Field(..., description="章节号", ge=1)
     focus: Optional[str] = Field(None, description="润色重点（可选）")
+    requirements: Optional[str] = Field(None, description="自定义修订要求（可选）")
 
     model_config = {
         "json_schema_extra": {
             "example": {
                 "novel_id": "novel_abc123",
                 "chapter_number": 1,
-                "focus": "提升动作场景的描写"
+                "focus": "提升动作场景的描写",
+                "requirements": "让战斗更加惨烈，增加主角的心理活动"
             }
         }
     }
@@ -63,12 +80,14 @@ class ReviewChapterRequest(BaseModel):
     """评审章节请求"""
     novel_id: str = Field(..., description="小说ID")
     chapter_number: int = Field(..., description="章节号", ge=1)
+    requirements: Optional[str] = Field(None, description="自定义评审要求（可选）")
 
     model_config = {
         "json_schema_extra": {
             "example": {
                 "novel_id": "novel_abc123",
-                "chapter_number": 1
+                "chapter_number": 1,
+                "requirements": "重点评审对话的自然度和角色人设是否崩坍"
             }
         }
     }

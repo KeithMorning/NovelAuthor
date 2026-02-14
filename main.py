@@ -129,7 +129,8 @@ def outline(
 @app.command()
 def write(
     novel_id: str = typer.Option(..., "--id", "-i", help="小说ID"),
-    chapter: int = typer.Option(..., "--chapter", "-c", help="章节号")
+    chapter: int = typer.Option(..., "--chapter", "-c", help="章节号"),
+    expand: bool = typer.Option(True, "--expand/--no-expand", help="是否启用章节规划细化")
 ):
     """写作指定章节"""
     import asyncio
@@ -145,7 +146,8 @@ def write(
     with console.status(f"[bold green]正在创作第{chapter}章..."):
         result = asyncio.run(coordinator.write_chapter_workflow(
             novel_id=novel_id,
-            chapter_number=chapter
+            chapter_number=chapter,
+            enable_expansion=expand
         ))
 
     if result["status"] == "success":
@@ -163,6 +165,111 @@ def write(
         console.print(f"[dim]{ch.content[:200]}...[/dim]")
     else:
         console.print(f"\n[red]✗[/red] {result['message']}")
+        if "error" in result:
+            console.print(f"[red]错误详情: {result['error']}[/red]")
+
+
+@app.command()
+def write_all(
+    novel_id: str = typer.Option(..., "--id", "-i", help="小说ID"),
+    start: int = typer.Option(1, "--start", "-s", help="起始章节号（用于从中断处恢复）"),
+    expand: bool = typer.Option(True, "--expand/--no-expand", help="是否启用章节规划细化")
+):
+    """按顺序写作全部章节"""
+    import asyncio
+    from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeElapsedColumn
+    from novel_ai_agent.agents.coordinator import CoordinatorAgent
+    from novel_ai_agent.utils.file_manager import file_manager
+
+    console.print(Panel(f"[bold cyan]批量写作全部章节[/bold cyan]"))
+    console.print(f"小说ID: [yellow]{novel_id}[/yellow]")
+    console.print(f"起始章节: [yellow]第{start}章[/yellow]\n")
+
+    # 加载小说信息
+    novel = file_manager.load_novel_json(novel_id)
+    if not novel:
+        console.print(f"[red]错误:[/red] 未找到小说 {novel_id}")
+        return
+
+    if not novel.outline or not novel.outline.chapters_plan:
+        console.print(f"[red]错误:[/red] 小说没有大纲，请先创建大纲")
+        return
+
+    total_chapters = len(novel.outline.chapters_plan)
+    written = {ch.number for ch in novel.chapters} if novel.chapters else set()
+    to_write = [cp for cp in novel.outline.chapters_plan
+                if cp.chapter_number >= start and cp.chapter_number not in written]
+
+    if not to_write:
+        console.print("[green]✓[/green] 所有章节已完成，无需写作")
+        return
+
+    console.print(f"[bold]小说[/bold]: {novel.title}")
+    console.print(f"[bold]总章节[/bold]: {total_chapters} 章")
+    console.print(f"[bold]已完成[/bold]: {len(written)} 章")
+    console.print(f"[bold]待写作[/bold]: {len(to_write)} 章\n")
+
+    # 使用 Progress 显示进度
+    coordinator = CoordinatorAgent()
+    progress_task = None
+    progress_bar = None
+
+    def progress_callback(chapter_num, total, status, message):
+        nonlocal progress_task, progress_bar
+        if progress_bar and progress_task is not None:
+            if status == "writing":
+                progress_bar.update(progress_task, description=f"[cyan]第{chapter_num}章[/cyan]")
+            elif status == "done":
+                progress_bar.advance(progress_task)
+                console.print(f"  [green]✓[/green] {message}")
+            elif status == "error":
+                console.print(f"  [red]✗[/red] {message}")
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TimeElapsedColumn(),
+        console=console
+    ) as progress:
+        progress_bar = progress
+        progress_task = progress.add_task(
+            f"[cyan]写作中...[/cyan]",
+            total=len(to_write)
+        )
+
+        result = asyncio.run(coordinator.write_all_chapters_workflow(
+            novel_id=novel_id,
+            start_chapter=start,
+            progress_callback=progress_callback,
+            enable_expansion=expand
+        ))
+
+    # 显示结果
+    console.print()
+    if result["status"] == "success":
+        console.print(f"[green]✓[/green] {result['message']}")
+        console.print(f"\n[bold]写作统计[/bold]:")
+        console.print(f"  完成章节: {result['chapters_written']} 章")
+        console.print(f"  总字数: {result['total_words']:,} 字")
+
+        if result.get("chapters_completed"):
+            console.print(f"\n[bold]各章详情[/bold]:")
+            for ch in result["chapters_completed"]:
+                console.print(f"  第{ch['number']}章 {ch['title']}: {ch['word_count']}字")
+
+        console.print(f"\n[bold green]全部完成！[/bold green]")
+        console.print(f"- 查看完整小说: [cyan]python main.py export --id {novel_id}[/cyan]")
+
+    elif result["status"] == "partial":
+        console.print(f"[yellow]⚠[/yellow] {result['message']}")
+        console.print(f"\n已完成 {result['chapters_written']} 章，总字数: {result.get('total_words', 0):,} 字")
+        failed = result.get("failed_chapter", "?")
+        console.print(f"\n[bold]从断点恢复[/bold]: [cyan]python main.py write-all --id {novel_id} --start {failed}[/cyan]")
+
+    else:
+        console.print(f"[red]✗[/red] {result['message']}")
         if "error" in result:
             console.print(f"[red]错误详情: {result['error']}[/red]")
 
@@ -408,7 +515,8 @@ def recommend_style(genre: str = typer.Option(..., "--genre", "-g", help="小说
 def polish(
     novel_id: str = typer.Option(..., "--id", "-i", help="小说ID"),
     chapter: int = typer.Option(..., "--chapter", "-c", help="章节号"),
-    focus: str = typer.Option("", "--focus", "-f", help="重点关注的方面（多个用逗号分隔）")
+    focus: str = typer.Option("", "--focus", "-f", help="重点关注的方面（多个用逗号分隔）"),
+    requirements: str = typer.Option("", "--requirements", "-r", help="自定义修订要求")
 ):
     """润色指定章节"""
     import asyncio
@@ -441,7 +549,8 @@ def polish(
         result = asyncio.run(editor.polish_chapter(
             chapter=target_chapter,
             style=novel.author_style,
-            focus_areas=focus_areas
+            focus_areas=focus_areas,
+            user_requirements=requirements
         ))
 
     if result["status"] == "success":
@@ -463,7 +572,8 @@ def polish(
 @app.command()
 def review(
     novel_id: str = typer.Option(..., "--id", "-i", help="小说ID"),
-    chapter: int = typer.Option(..., "--chapter", "-c", help="章节号")
+    chapter: int = typer.Option(..., "--chapter", "-c", help="章节号"),
+    requirements: str = typer.Option("", "--requirements", "-r", help="自定义评审要求")
 ):
     """评审指定章节"""
     import asyncio
@@ -498,7 +608,8 @@ def review(
             style=novel.author_style,
             characters=novel.characters,
             outline=novel.outline,
-            previous_chapters=previous_chapters if previous_chapters else None
+            previous_chapters=previous_chapters if previous_chapters else None,
+            user_requirements=requirements
         ))
 
     if result["status"] == "success":

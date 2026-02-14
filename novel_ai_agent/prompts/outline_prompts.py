@@ -30,22 +30,19 @@ OUTLINE_GENERATION_PROMPT = """请根据以下信息创建一个完整的小说�
 
 请生成一个包含以下内容的大纲：
 
-1. **故事简介** (100-200字)
-2. **主题思想** (简要说明)
-3. **故事背景设定** (如果适用)
-4. **主要情节点** (3-5个关键转折点，包含：
-   - 情节点名称
-   - 描述
-   - 所在章节范围
-   - 重要性(高/中/低)
-)
-5. **章节规划** (每章包含：
-   - 章节标题
-   - 章节梗概(50-100字)
-   - 关键事件列表
-   - 涉及的主要角色
-   - 预计字数
-)
+1. **故事简介** (150-300字，要求包含核心冲突、高潮点和结局走向)
+2. **主题思想** (简要说明故事探讨的深层问题)
+3. **故事背景设定** (详细描述世界观、核心设定和环境氛围)
+4. **主要情节点** (要求：
+   - 如果总章节数 <= 10，请设计 3-5 个关键转折点
+   - 如果总章节数 > 10，请设计 6-10 个关键转折点
+   - 每个情节点包含：名称、描述、所在章节范围、重要性
+   - 确保情节点的分布合理，避免出现故事中后期情节稀释或节奏拖累)
+5. **章节规划** (要求：
+   - 每章包含：章节标题、章节梗概、关键事件列表、涉及角色、预计字数
+   - 章节梗概应具体到本章的行为驱动（不仅是发生了什么，还有为什么发生）
+   - 关键事件应包含 3-5 个具体的冲突点或情感转折点
+   - 确保每一章都有明确的叙事任务，严禁出现"为了填充字数"的平淡章节)
 
 以JSON格式输出，结构如下：
 ```json
@@ -66,7 +63,7 @@ OUTLINE_GENERATION_PROMPT = """请根据以下信息创建一个完整的小说�
       "chapter_number": 1,
       "title": "章节标题",
       "summary": "章节梗概",
-      "key_events": ["事件1", "事件2"],
+      "key_events": ["冲突点/事件1", "冲突点/事件2", "情感转折/事件3"],
       "characters_involved": ["角色1", "角色2"],
       "estimated_words": 3000
     }}
@@ -97,8 +94,17 @@ CHAPTER_EXPANSION_PROMPT = """请为第{chapter_number}章生成更详细的规�
 - 当前标题: {current_title}
 - 当前梗概: {current_summary}
 
-**整体大纲上下文**:
+**实际故事上下文 (MUST FOLLOW)**:
+{story_context}
+
+**整体大纲上下文 (Reference)**:
 {outline_context}
+
+**核心指令: 渐进式适配 (Progressive Adaptation)**
+1. **世界状态优先**: 上方的 [实际故事上下文] 是已发生的既定事实。如果它与 [大纲上下文] 冲突，**必须以实际故事上下文为准**。
+   - **禁止复活**: 如果角色在 [实际故事上下文] 中标记为"已死亡"或"下线"，他们 **绝对不能** 在本章作为活跃角色出现。
+   - **剧情替补 (Substitution)**: 如果原大纲安排了已死亡角色进行关键行动，你必须 **指派其他合适的在场角色** 替代其完成该行动，确保主线剧情逻辑得以延续。
+2. **剧情连贯性**: 请根据 [最近实际剧情] 推演本章的开篇，确保与上一章的结尾自然衔接，填补大纲与实际剧情之间的空白。
 
 请扩展这一章的规划，包括：
 1. 更详细的章节梗概 (200字左右)
@@ -108,7 +114,25 @@ CHAPTER_EXPANSION_PROMPT = """请为第{chapter_number}章生成更详细的规�
 5. 本章的情感基调
 6. 与前后章节的衔接点
 
-以JSON格式输出。
+以JSON格式输出，结构如下：
+```json
+{{
+  "detailed_summary": "详细章节梗概 (200字以上)",
+  "scenes": [
+    {{
+      "description": "场景描述",
+      "focus": "场景焦点",
+      "characters": ["角色1", "角色2"]
+    }}
+  ],
+  "emotional_tone": "情感基调",
+  "key_dialogues": ["对话点/动作点1", "对话点/动作点2"],
+  "transitions": {{
+    "previous": "与前一章的衔接逻辑",
+    "next": "与后一章的铺垫逻辑"
+  }}
+}}
+```
 """
 
 def get_outline_generation_prompt(
@@ -153,12 +177,14 @@ def get_chapter_expansion_prompt(
     chapter_number: int,
     current_title: str,
     current_summary: str,
-    outline_context: str
+    outline_context: str,
+    story_context: str = ""
 ) -> str:
     """获取章节扩展prompt"""
     return CHAPTER_EXPANSION_PROMPT.format(
         chapter_number=chapter_number,
         current_title=current_title,
         current_summary=current_summary,
-        outline_context=outline_context
+        outline_context=outline_context,
+        story_context=story_context or "暂无特殊状态"
     )

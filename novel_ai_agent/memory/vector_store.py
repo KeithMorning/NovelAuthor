@@ -72,18 +72,18 @@ class VectorMemoryStore:
         logger.info("策略: 优先使用本地缓存模型（离线模式）")
 
         try:
-            # 方案1: 使用完全离线的 LocalEmbeddings
-            logger.info("方案1: 导入 LocalEmbeddings")
-            from novel_ai_agent.memory.local_embeddings import LocalEmbeddings
+            # 方案1: 使用完全离线的 LocalEmbeddings（单例模式）
+            logger.info("方案1: 导入 get_local_embeddings")
+            from novel_ai_agent.memory.local_embeddings import get_local_embeddings
 
-            logger.info("方案1: 创建 LocalEmbeddings 实例...")
+            logger.info("方案1: 获取 LocalEmbeddings 实例（单例）...")
             init_start = time.time()
 
-            embeddings = LocalEmbeddings()
+            embeddings = get_local_embeddings(use_fallback=False)
 
             init_time = time.time() - init_start
-            logger.info(f"✓ LocalEmbeddings 初始化成功，耗时: {init_time:.3f}秒")
-            logger.info("✓ 使用本地缓存的 Embedding 模型（完全离线）")
+            logger.info(f"✓ LocalEmbeddings 获取成功，耗时: {init_time:.3f}秒")
+            logger.info("✓ 使用本地缓存的 Embedding 模型（完全离线，单例模式）")
             logger.info("="*60)
 
             return embeddings

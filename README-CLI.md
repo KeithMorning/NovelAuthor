@@ -109,7 +109,8 @@ python main.py init
 | | `check` | 检查内容一致性 | `--id` |
 | | `export` | 导出为Markdown | `--id` `--output` |
 | | `resume` | 从中断继续 | `--id` |
-| **章节创作** | `write` | 写作章节 | `--id` `--chapter` |
+| **章节创作** | `write` | 写作单个章节 | `--id` `--chapter` |
+| | `write-all` | 批量写作全部章节 | `--id` `--start` |
 | | `polish` | 润色章节 | `--id` `--chapter` |
 | | `review` | 评审章节 | `--id` `--chapter` |
 | | `interactive` | 交互式创作 | `--id` |
@@ -144,9 +145,11 @@ python main.py polish --id novel_xxx --chapter 1
 # 5. 评审第1章
 python main.py review --id novel_xxx --chapter 1
 
-# 6. 继续写作后续章节
-python main.py write --id novel_xxx --chapter 2
-python main.py write --id novel_xxx --chapter 3
+# 6. 一键写完所有剩余章节
+python main.py write-all --id novel_xxx
+
+# 或逐章写作
+# python main.py write --id novel_xxx --chapter 2
 
 # 7. 导出完整小说
 python main.py export --id novel_xxx
@@ -303,28 +306,62 @@ python main.py write --id novel_001 --chapter 1
 - `--id, -i`: 小说ID（必填）
 - `--chapter, -c`: 章节编号（必填）
 
+##### `write-all` - 批量写作全部章节
+按顺序自动写作所有未完成的章节，支持断点恢复
+
+```bash
+# 从头开始写所有章节
+python main.py write-all --id novel_001
+
+# 从第5章开始（断点恢复）
+python main.py write-all --id novel_001 --start 5
+```
+
+**参数**:
+- `--id, -i`: 小说ID（必填）
+- `--start, -s`: 起始章节号（默认：1，用于从中断处恢复）
+
+**特性**:
+- 自动跳过已完成的章节
+- Rich 进度条实时显示写作进度
+- 失败时停止并提示恢复命令
+- 完成后显示各章字数统计
+
 ##### `polish` - 润色章节
 AI 润色指定章节内容
 
 ```bash
-python main.py polish --id novel_001 --chapter 1 --focus "语言优美度"
+# 基本润色
+python main.py polish --id novel_001 --chapter 1
+
+# 指定关注点
+python main.py polish --id novel_001 --chapter 1 --focus "环境描写,人物心理"
+
+# 自定义修订要求
+python main.py polish --id novel_001 --chapter 1 --requirements "将战斗场面描写得更惨烈一些，增加主角的心理压力"
 ```
 
 **参数**:
 - `--id, -i`: 小说ID（必填）
 - `--chapter, -c`: 章节编号（必填）
-- `--focus, -f`: 重点关注方面（可选）
+- `--focus, -f`: 重点关注的方面（可选，多个用逗号分隔）
+- `--requirements, -r`: 自定义修订要求（可选，提供具体的修改指令）
 
 ##### `review` - 评审章节
-AI 多维度评审章节质量
+对指定章节进行全面评审，提供评分和修改建议
 
 ```bash
+# 基本评审
 python main.py review --id novel_001 --chapter 1
+
+# 带自定义要求的评审
+python main.py review --id novel_001 --chapter 1 --requirements "重点检查主角的人设是否有走形，以及对话是否符合古风背景"
 ```
 
 **参数**:
 - `--id, -i`: 小说ID（必填）
 - `--chapter, -c`: 章节编号（必填）
+- `--requirements, -r`: 自定义评审要求（可选，指定评审的侧重点）
 
 ##### `interactive` - 交互式创作
 启动交互式创作模式，逐步引导创作

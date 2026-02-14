@@ -70,6 +70,7 @@ class EditorAgent(BaseAgent):
         chapter: Chapter,
         style: str,
         focus_areas: Optional[List[str]] = None,
+        user_requirements: str = "",
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -79,6 +80,7 @@ class EditorAgent(BaseAgent):
             chapter: 章节对象
             style: 写作风格
             focus_areas: 重点关注的方面（如：对话、环境描写、动作场面等）
+            user_requirements: 用户自定义修订要求（可选）
 
         Returns:
             Dict: 包含润色后的章节
@@ -88,7 +90,8 @@ class EditorAgent(BaseAgent):
             user_prompt = get_polish_prompt(
                 content=chapter.content,
                 style=style,
-                focus_areas=focus_areas
+                focus_areas=focus_areas,
+                user_requirements=user_requirements
             )
 
             # 调用LLM
@@ -100,16 +103,13 @@ class EditorAgent(BaseAgent):
             response = await self.llm.ainvoke(messages)
             polished_content = response.content
 
-            # 创建新版本的章节
-            polished_chapter = Chapter(
-                number=chapter.number,
-                title=chapter.title,
-                summary=chapter.summary,
-                content=polished_content,
-                status=chapter.status,
-                version=chapter.version + 1,
-                notes=f"润色版本 - 关注: {', '.join(focus_areas) if focus_areas else '全面润色'}"
-            )
+            # 创建新版本的章节（使用 model_copy 保留伏笔等结构化数据）
+            polished_chapter = chapter.model_copy(update={
+                "content": polished_content,
+                "version": chapter.version + 1,
+                "notes": f"润色版本 - 关注: {', '.join(focus_areas) if focus_areas else '全面润色'}",
+                "updated_at": __import__('datetime').datetime.now()
+            })
 
             polished_chapter.update_word_count()
 
@@ -162,13 +162,14 @@ class EditorAgent(BaseAgent):
                 previous_context=previous_context
             )
 
-            # 调用LLM
+            # 调用LLM（使用 JSON Output Mode）
+            json_llm = self._get_json_llm()
             messages = [
                 SystemMessage(content=EDITOR_SYSTEM_PROMPT),
                 HumanMessage(content=user_prompt)
             ]
 
-            response = await self.llm.ainvoke(messages)
+            response = await json_llm.ainvoke(messages)
             content = response.content
 
             # 解析JSON响应
@@ -219,13 +220,14 @@ class EditorAgent(BaseAgent):
                 story_context=story_context
             )
 
-            # 调用LLM
+            # 调用LLM（使用 JSON Output Mode）
+            json_llm = self._get_json_llm()
             messages = [
                 SystemMessage(content=EDITOR_SYSTEM_PROMPT),
                 HumanMessage(content=user_prompt)
             ]
 
-            response = await self.llm.ainvoke(messages)
+            response = await json_llm.ainvoke(messages)
             content = response.content
 
             # 解析JSON响应
@@ -253,6 +255,7 @@ class EditorAgent(BaseAgent):
         characters: List[Character],
         outline: Outline,
         previous_chapters: Optional[List[Chapter]] = None,
+        user_requirements: str = "",
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -264,6 +267,7 @@ class EditorAgent(BaseAgent):
             characters: 角色列表
             outline: 故事大纲
             previous_chapters: 前面的章节
+            user_requirements: 用户自定义评审要求（可选）
 
         Returns:
             Dict: 包含详细的评审报告
@@ -283,16 +287,18 @@ class EditorAgent(BaseAgent):
                 style=style,
                 characters=characters_info,
                 outline_summary=outline_summary,
-                previous_context=previous_context
+                previous_context=previous_context,
+                user_requirements=user_requirements
             )
 
-            # 调用LLM
+            # 调用LLM（使用 JSON Output Mode）
+            json_llm = self._get_json_llm()
             messages = [
                 SystemMessage(content=EDITOR_SYSTEM_PROMPT),
                 HumanMessage(content=user_prompt)
             ]
 
-            response = await self.llm.ainvoke(messages)
+            response = await json_llm.ainvoke(messages)
             content = response.content
 
             # 解析JSON响应
@@ -346,16 +352,13 @@ class EditorAgent(BaseAgent):
             response = await self.llm.ainvoke(messages)
             revised_content = response.content
 
-            # 创建新版本的章节
-            revised_chapter = Chapter(
-                number=chapter.number,
-                title=chapter.title,
-                summary=chapter.summary,
-                content=revised_content,
-                status=chapter.status,
-                version=chapter.version + 1,
-                notes=f"针对性修改 - 修复了 {len(issues)} 个问题"
-            )
+            # 创建新版本的章节（使用 model_copy 保留伏笔等结构化数据）
+            revised_chapter = chapter.model_copy(update={
+                "content": revised_content,
+                "version": chapter.version + 1,
+                "notes": f"针对性修改 - 修复了 {len(issues)} 个问题",
+                "updated_at": __import__('datetime').datetime.now()
+            })
 
             revised_chapter.update_word_count()
 
