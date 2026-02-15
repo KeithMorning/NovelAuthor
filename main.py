@@ -66,7 +66,8 @@ def create(
     theme: str = typer.Option(..., "--theme", help="故事主题"),
     style: str = typer.Option("中性风格", "--style", "-s", help="作家风格"),
     chapters: int = typer.Option(20, "--chapters", "-n", help="章节数量"),
-    requirements: str = typer.Option("", "--requirements", "-r", help="额外需求")
+    requirements: str = typer.Option("", "--requirements", "-r", help="额外需求"),
+    interactive: bool = typer.Option(False, "--interactive", "-i", help="创建后进入交互式对话模式进行修改")
 ):
     """创建新小说项目 (包含大纲和角色)"""
     import asyncio
@@ -103,6 +104,83 @@ def create(
         console.print(f"- 查看大纲: [cyan]cat novel_ai_agent/output/outlines/{result['novel_id']}_outline_v1.md[/cyan]")
         console.print(f"- 查看角色: [cyan]cat novel_ai_agent/output/characters/{result['novel_id']}_characters.md[/cyan]")
         console.print(f"- 开始写作: [cyan]python main.py write --id {result['novel_id']} --chapter 1[/cyan]")
+
+        # 如果启用了交互模式，进入对话
+        if interactive:
+            from novel_ai_agent.agents.dialogue_agent import DialogueAgent
+            from rich.prompt import Prompt
+
+            novel_id = result['novel_id']
+            novel = result['novel']
+
+            console.print(Panel("[bold cyan]交互式对话模式[/bold cyan]"))
+            console.print("您可以对生成的大纲和角色进行修改")
+            console.print("输入 'quit' 或 'exit' 退出对话\n")
+
+            # 准备上下文
+            context = {
+                "novel_title": novel.title,
+                "novel_id": novel_id,
+                "novel": novel
+            }
+
+            # 创建对话Agent
+            dialogue_agent = DialogueAgent(novel_id)
+
+            # 对话循环
+            async def chat_loop():
+                console.print(f"\n[dim]大纲概览: {novel.outline.summary[:100]}...[/dim]")
+                console.print(f"[dim]角色数: {len(novel.characters)}[/dim]")
+                console.print(f"[dim]章节数: {len(novel.outline.chapters_plan)}[/dim]")
+
+                console.print("\n[bold cyan]你可以:[/bold cyan]")
+                console.print("  - 细化某章节（如：'细化第3章'）")
+                console.print("  - 修改大纲（如：'修改大纲，调整故事走向'）")
+                console.print("  - 修改角色（如：'修改角色，让反派更聪明'）")
+                console.print("  - 输入 'quit' 或 'exit' 退出\n")
+
+                while True:
+                    try:
+                        user_input = Prompt.ask("[bold cyan]你[/bold cyan]")
+
+                        if user_input.lower() in ["quit", "exit", "退出"]:
+                            console.print("\n[yellow]退出对话模式[/yellow]")
+                            break
+
+                        with console.status("[bold green]AI正在思考..."):
+                            result = await dialogue_agent.chat(user_input, context)
+
+                        if result["status"] == "success":
+                            console.print(f"\n[bold green]助手[/bold green]: {result['response']}\n")
+
+                            # 如果有需要执行的操作
+                            if result.get("action"):
+                                action = result["action"]
+                                console.print(f"[yellow]检测到操作请求: {action['type']}[/yellow]")
+
+                                confirm = Prompt.ask(
+                                    "是否执行此操作？",
+                                    choices=["y", "n"],
+                                    default="y"
+                                )
+
+                                if confirm == "y":
+                                    console.print("[cyan]执行操作中...[/cyan]")
+                                    exec_result = await dialogue_agent.execute_action(action, context)
+
+                                    if exec_result.get("status") == "success":
+                                        console.print(f"[green]✓ 操作完成: {exec_result.get('message', '成功')}[/green]")
+                                        # 重新加载小说以获取最新数据
+                                        from novel_ai_agent.utils.file_manager import file_manager
+                                        novel = file_manager.load_novel_json(novel_id)
+                                        context["novel"] = novel
+                                    else:
+                                        console.print(f"[red]✗ 操作失败: {exec_result.get('message', '未知错误')}[/red]")
+
+                    except Exception as e:
+                        console.print(f"[red]错误: {e}[/red]")
+
+            asyncio.run(chat_loop())
     else:
         console.print(f"\n[red]✗[/red] {result['message']}")
         if "error" in result:
@@ -130,7 +208,8 @@ def write(
     chapter: int = typer.Option(..., "--chapter", "-c", help="章节号"),
     expand: bool = typer.Option(True, "--expand/--no-expand", help="是否启用章节规划细化"),
     review: bool = typer.Option(False, "--review/--no-review", help="写完后自动评审"),
-    force: bool = typer.Option(False, "--force", "-f", help="强制重写已存在的章节")
+    force: bool = typer.Option(False, "--force", "-f", help="强制重写已存在的章节"),
+    interactive: bool = typer.Option(False, "--interactive", help="写完后进入交互式对话模式进行修改")
 ):
     """写作指定章节"""
     import asyncio
@@ -234,6 +313,97 @@ def write(
                         console.print(f"\n[bold yellow]高优先级修改建议:[/bold yellow]")
                         for s in high_priority:
                             console.print(f"  • {s.get('area')}: {s.get('suggestion')}")
+
+        # 如果启用了交互模式，进入对话
+        if interactive:
+            from novel_ai_agent.agents.dialogue_agent import DialogueAgent
+            from rich.prompt import Prompt
+
+            # 重新加载最新章节
+            novel = file_manager.load_novel_json(novel_id)
+            current_ch = novel.get_chapter(chapter) if novel else None
+
+            console.print(Panel("[bold cyan]交互式对话模式[/bold cyan]"))
+            console.print("您可以对本章进行修改")
+            console.print("输入 'quit' 或 'exit' 退出对话\n")
+
+            # 准备上下文
+            context = {
+                "novel_title": novel.title,
+                "novel_id": novel_id,
+                "novel": novel,
+                "current_chapter": {
+                    "number": chapter,
+                    "title": current_ch.title if current_ch else "",
+                    "summary": current_ch.summary if current_ch else ""
+                }
+            }
+
+            # 创建对话Agent
+            dialogue_agent = DialogueAgent(novel_id)
+
+            # 对话循环
+            async def chat_loop():
+                console.print(f"\n[dim]当前章节: 第{chapter}章 - {current_ch.title if current_ch else ''}[/dim]")
+                console.print(f"[dim]本章字数: {current_ch.word_count if current_ch else 0}[/dim]")
+
+                console.print("\n[bold cyan]你可以:[/bold cyan]")
+                console.print("  - 修改本章（如：'重写本章，让对话更自然'）")
+                console.print("  - 润色本章（如：'润色本章，优化表达'）")
+                console.print("  - 细化章节规划（如：'细化第X章'）")
+                console.print("  - 修改大纲（如：'修改大纲'）")
+                console.print("  - 输入 'quit' 或 'exit' 退出\n")
+
+                while True:
+                    try:
+                        user_input = Prompt.ask("[bold cyan]你[/bold cyan]")
+
+                        if user_input.lower() in ["quit", "exit", "退出"]:
+                            console.print("\n[yellow]退出对话模式[/yellow]")
+                            break
+
+                        with console.status("[bold green]AI正在思考..."):
+                            result = await dialogue_agent.chat(user_input, context)
+
+                        if result["status"] == "success":
+                            console.print(f"\n[bold green]助手[/bold green]: {result['response']}\n")
+
+                            # 如果有需要执行的操作
+                            if result.get("action"):
+                                action = result["action"]
+                                console.print(f"[yellow]检测到操作请求: {action['type']}[/yellow]")
+
+                                confirm = Prompt.ask(
+                                    "是否执行此操作？",
+                                    choices=["y", "n"],
+                                    default="y"
+                                )
+
+                                if confirm == "y":
+                                    console.print("[cyan]执行操作中...[/cyan]")
+                                    exec_result = await dialogue_agent.execute_action(action, context)
+
+                                    if exec_result.get("status") == "success":
+                                        console.print(f"[green]✓ 操作完成: {exec_result.get('message', '成功')}[/green]")
+                                        # 重新加载小说以获取最新数据
+                                        novel = file_manager.load_novel_json(novel_id)
+                                        current_ch = novel.get_chapter(chapter) if novel else None
+                                        context["novel"] = novel
+                                        context["current_chapter"] = {
+                                            "number": chapter,
+                                            "title": current_ch.title if current_ch else "",
+                                            "summary": current_ch.summary if current_ch else ""
+                                        }
+                                        if current_ch:
+                                            console.print(f"\n[bold]内容预览[/bold] (前200字):")
+                                            console.print(f"[dim]{current_ch.content[:200]}...[/dim]")
+                                    else:
+                                        console.print(f"[red]✗ 操作失败: {exec_result.get('message', '未知错误')}[/red]")
+
+                    except Exception as e:
+                        console.print(f"[red]错误: {e}[/red]")
+
+            asyncio.run(chat_loop())
     else:
         console.print(f"\n[red]✗[/red] {result['message']}")
         if "error" in result:
@@ -245,7 +415,8 @@ def write_all(
     novel_id: str = typer.Option(..., "--id", "-i", help="小说ID"),
     start: int = typer.Option(1, "--start", "-s", help="起始章节号（用于从中断处恢复）"),
     expand: bool = typer.Option(True, "--expand/--no-expand", help="是否启用章节规划细化"),
-    force: bool = typer.Option(False, "--force", "-f", help="强制重写已存在的章节")
+    force: bool = typer.Option(False, "--force", "-f", help="强制重写已存在的章节"),
+    interactive: bool = typer.Option(False, "--interactive", help="写完后进入交互式对话模式进行修改")
 ):
     """按顺序写作全部章节"""
     import asyncio
@@ -350,6 +521,83 @@ def write_all(
 
         console.print(f"\n[bold green]全部完成！[/bold green]")
         console.print(f"- 查看完整小说: [cyan]python main.py export --id {novel_id}[/cyan]")
+
+        # 如果启用了交互模式，进入对话
+        if interactive:
+            from novel_ai_agent.agents.dialogue_agent import DialogueAgent
+            from rich.prompt import Prompt
+
+            # 重新加载最新小说
+            novel = file_manager.load_novel_json(novel_id)
+
+            console.print(Panel("[bold cyan]交互式对话模式[/bold cyan]"))
+            console.print("您可以对小说进行修改")
+            console.print("输入 'quit' 或 'exit' 退出对话\n")
+
+            # 准备上下文
+            context = {
+                "novel_title": novel.title,
+                "novel_id": novel_id,
+                "novel": novel
+            }
+
+            # 创建对话Agent
+            dialogue_agent = DialogueAgent(novel_id)
+
+            # 对话循环
+            async def chat_loop():
+                console.print(f"\n[dim]小说: {novel.title}[/dim]")
+                console.print(f"[dim]已写章节: {len(novel.chapters) if novel.chapters else 0}[/dim]")
+                console.print(f"[dim]大纲章节: {len(novel.outline.chapters_plan) if novel.outline else 0}[/dim]")
+
+                console.print("\n[bold cyan]你可以:[/bold cyan]")
+                console.print("  - 修改某章节（如：'修改第3章'）")
+                console.print("  - 细化章节规划（如：'细化第5章'）")
+                console.print("  - 修改大纲（如：'修改大纲'）")
+                console.print("  - 修改角色（如：'修改角色'）")
+                console.print("  - 输入 'quit' 或 'exit' 退出\n")
+
+                while True:
+                    try:
+                        user_input = Prompt.ask("[bold cyan]你[/bold cyan]")
+
+                        if user_input.lower() in ["quit", "exit", "退出"]:
+                            console.print("\n[yellow]退出对话模式[/yellow]")
+                            break
+
+                        with console.status("[bold green]AI正在思考..."):
+                            result = await dialogue_agent.chat(user_input, context)
+
+                        if result["status"] == "success":
+                            console.print(f"\n[bold green]助手[/bold green]: {result['response']}\n")
+
+                            # 如果有需要执行的操作
+                            if result.get("action"):
+                                action = result["action"]
+                                console.print(f"[yellow]检测到操作请求: {action['type']}[/yellow]")
+
+                                confirm = Prompt.ask(
+                                    "是否执行此操作？",
+                                    choices=["y", "n"],
+                                    default="y"
+                                )
+
+                                if confirm == "y":
+                                    console.print("[cyan]执行操作中...[/cyan]")
+                                    exec_result = await dialogue_agent.execute_action(action, context)
+
+                                    if exec_result.get("status") == "success":
+                                        console.print(f"[green]✓ 操作完成: {exec_result.get('message', '成功')}[/green]")
+                                        # 重新加载小说以获取最新数据
+                                        novel = file_manager.load_novel_json(novel_id)
+                                        context["novel"] = novel
+                                    else:
+                                        console.print(f"[red]✗ 操作失败: {exec_result.get('message', '未知错误')}[/red]")
+
+                    except Exception as e:
+                        console.print(f"[red]错误: {e}[/red]")
+
+            asyncio.run(chat_loop())
 
     elif result["status"] == "partial":
         console.print(f"[yellow]⚠[/yellow] {result['message']}")

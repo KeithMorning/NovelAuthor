@@ -18,7 +18,8 @@
       "Bash(npm install @chakra-ui/react@^2.8.0 @chakra-ui/icons@^2.1.0 @emotion/react@^11 @emotion/styled@^11 framer-motion@^10 --legacy-peer-deps)",
       "Bash(npm install @monaco-editor/react)",
       "Bash(npm install:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(python -m py_compile:*)"
     ]
   }
 }
