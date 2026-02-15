@@ -1,10 +1,10 @@
-"""记忆系统模块"""
-from .vector_store import VectorMemoryStore, get_vector_store
+"""
+Memory 模块
+模式B下不需要向量检索，上下文由LLM直接处理
+"""
 from .memory_manager import MemoryManager, get_memory_manager, clear_memory_cache
 
 __all__ = [
-    "VectorMemoryStore",
-    "get_vector_store",
     "MemoryManager",
     "get_memory_manager",
     "clear_memory_cache"

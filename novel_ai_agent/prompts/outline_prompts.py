@@ -28,6 +28,9 @@ OUTLINE_GENERATION_PROMPT = """请根据以下信息创建一个完整的小说�
 **用户需求**:
 {user_requirements}
 
+**角色设定 (必须使用这些角色名)**:
+{character_info}
+
 请生成一个包含以下内容的大纲：
 
 1. **故事简介** (150-300字，要求包含核心冲突、高潮点和结局走向)
@@ -140,9 +143,13 @@ def get_outline_generation_prompt(
     genre: str,
     theme: str,
     chapter_count: int = 20,
-    words_per_chapter: int = 3000,
-    user_requirements: str = ""
+    words_per_chapter: int = None,
+    user_requirements: str = "",
+    character_info: str = ""
 ) -> str:
+    from ..config.settings import Settings
+    if words_per_chapter is None:
+        words_per_chapter = Settings().default_chapter_words
     """
     获取大纲生成prompt
 
@@ -153,6 +160,7 @@ def get_outline_generation_prompt(
         chapter_count: 章节数
         words_per_chapter: 每章字数
         user_requirements: 用户额外需求
+        character_info: 角色设定信息（包含角色名、性格、背景等）
 
     Returns:
         str: 格式化的prompt
@@ -163,7 +171,8 @@ def get_outline_generation_prompt(
         theme=theme,
         chapter_count=chapter_count,
         words_per_chapter=words_per_chapter,
-        user_requirements=user_requirements or "无特殊要求"
+        user_requirements=user_requirements or "无特殊要求",
+        character_info=character_info or "暂无角色设定，将根据故事需要自动安排角色"
     )
 
 def get_outline_refinement_prompt(current_outline: str, user_feedback: str) -> str:

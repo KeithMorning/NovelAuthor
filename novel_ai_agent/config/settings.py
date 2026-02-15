@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     # 模型配置 (根据provider自动选择)
     default_model: Optional[str] = None  # 如果为None,根据provider自动选择
     temperature: float = 0.7
-    max_tokens: int = 4096
+    max_tokens: int = 8192  # DeepSeek API 限制最大 8192（约5000-6000中文字）
 
     # 项目路径配置
     output_dir: str = "novel_ai_agent/output"
@@ -67,7 +67,11 @@ class Settings(BaseSettings):
     verbose: bool = True
 
     # 写作配置
-    default_chapter_words: int = 3000  # 默认章节字数
+    default_chapter_words: int = 4000  # 默认章节字数（约5000-6000 tokens输出）
+
+    # 代理配置（用于Charles抓包）
+    proxy_enabled: bool = False  # 默认关闭代理
+    proxy_url: str = "http://127.0.0.1:8888"  # Charles默认端口
 
     def get_model_name(self) -> str:
         """
@@ -83,7 +87,7 @@ class Settings(BaseSettings):
         model_defaults = {
             "anthropic": "claude-sonnet-4-20250514",
             "openai": "gpt-4o",
-            "deepseek": "deepseek-chat",
+            "deepseek": "deepseek-reasoner",
             "azure": "gpt-4"
         }
         return model_defaults.get(self.llm_provider, "claude-sonnet-4-20250514")

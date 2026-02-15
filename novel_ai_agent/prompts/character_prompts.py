@@ -35,11 +35,20 @@ CHARACTER_GENERATION_PROMPT = """请根据以下小说信息创建角色设定�
 **角色需求**:
 {character_requirements}
 
-**命名约束 (非常重要)**:
-1. **去重与差异化**: 每个角色的姓氏和名字首字应尽量不同，避免视觉和听觉上的混淆。
-2. **长短错落**: 姓名长度可以根据角色身份进行区分（如：单名、双名、外文译名交替使用）。
-3. **风格契合**: 针对{genre}类型，采用既符合类型特色又具有个人辨识度的名字，避免过分大众化或同质化的科幻/玄幻词汇。
-4. **禁止模式**: 禁止使用共享前缀（如“星X”、“天X”）或尾音相近的组合。
+**【关键】避免AI痕迹的角色设计要求**：
+
+1. **去范式化**：不要使用"理想主义主角+务实恋人+激进反抗领袖+保守体制派+工具人黑客"这种经典角色库组合。角色应该在某些方面符合类型预期，但在某些方面"不按牌理出牌"。
+
+2. **添加个人怪癖**：给每个角色添加一个看似无关但有记忆点的个人习惯、口头禅、小动作、或不相干的爱好。比如：一个反抗军领袖沉迷于收集旧式咖啡杯，一个黑客随身带着父亲的手帕，一个理性工程师相信星座运势。
+
+3. **性格矛盾**：避免"勇敢就全程勇敢，善良就全程善良"的扁平角色。角色可以同时有让人喜欢的优点和让人皱眉的缺点，可以在不同情境下表现不一致。
+
+4. **信息不对称**：不是每个角色都需要完整 backstory。有些角色可以只露冰山一角，有些秘密连角色自己都不知道。
+
+5. **关系复杂化**：角色关系不要只是"盟友/敌人/恋人"这种简单标签。可以有互相利用但彼此欣赏，可以有血缘但价值观对立，可以有共同目标但手段分歧。
+
+**命名约束**:
+{naming_constraints}
 
 请创建以下角色（以YAML格式输出）：
 
@@ -68,6 +77,9 @@ CHARACTER_GENERATION_PROMPT = """请根据以下小说信息创建角色设定�
 
 8. **发展弧线**:
    - arc: 角色在故事中的成长变化
+
+9. **个人怪癖** (新增):
+   - quirk: 一个看似无关但有记忆点的个人习惯或小特点
 
 YAML格式示例（YAML格式的优势：多行文本自然，不需要转义引号）：
 ```yaml
@@ -154,6 +166,51 @@ def _get_character_count_guide(chapter_count: int) -> str:
     )
 
 
+def _get_naming_constraints(genre: str) -> str:
+    """
+    根据小说类型生成对应的命名约束
+
+    Args:
+        genre: 小说类型
+
+    Returns:
+        str: 命名约束文本
+    """
+    genre_lower = genre.lower()
+
+    # 科幻/未来风格
+    if any(k in genre_lower for k in ["科幻", "未来", "科技", "太空", "赛博"]):
+        return """【科幻小说命名规则】
+- 角色命名规则：至少一半用纯中文名，少量的可以用外国名字
+- 纯中文名字两到三个字，鼓励三个字的
+- 纯中文名字要用有寓意的字，名字必须要现代化
+- AI系统/超级计算机禁止用人类神名，参考现代AI模型命名（如：GPT、Claude、Gemini、Llama、Mistral）
+- 禁止用"阿X"这种格式的名字
+- 名字要有辨识度，让人一眼能记住"""
+
+    # 古代/武侠/历史风格
+    if any(k in genre_lower for k in ["古代", "武侠", "历史", "仙侠", "玄幻"]):
+        return """【古代/武侠/历史风格命名规则】
+- 使用古风姓名（复姓如：欧阳、司马，单姓如：柳、叶、萧、慕）
+- 名字要有历史感，可用生僻字或有意蕴的字（如：瑾、渊、墨、承、衍）
+- 避免现代名字
+- 姓氏和名字要有呼应或冲突感
+- 鼓励使用三个字或更多字的名字增加辨识度"""
+
+    # 现代/都市/悬疑/推理风格
+    if any(k in genre_lower for k in ["现代", "都市", "悬疑", "推理", "犯罪", "职场"]):
+        return """【现代/都市风格命名规则】
+- 可用常见姓名，但要有个性（如：方言、绰号、化名）
+- 或使用有特点的组合
+- 避免太大众化的名字
+- 姓氏和名字要有呼应或冲突感
+- 鼓励使用三个字或更多字的名字增加辨识度"""
+
+    # 默认规则
+    return """【通用命名规则】
+- 姓氏和名字要有呼应或冲突感，让人一眼能记住
+- 避免共享前缀、尾音相近
+- 鼓励使用三个字或更多字的名字增加辨识度"""
 def get_character_generation_prompt(
     title: str,
     genre: str,
@@ -179,6 +236,7 @@ def get_character_generation_prompt(
         str: 格式化的prompt
     """
     character_count_guide = _get_character_count_guide(chapter_count)
+    naming_constraints = _get_naming_constraints(genre)
 
     return CHARACTER_GENERATION_PROMPT.format(
         title=title,
@@ -188,7 +246,8 @@ def get_character_generation_prompt(
         chapter_count=chapter_count,
         outline_key_points=outline_key_points,
         character_requirements=character_requirements or "无特殊要求，请根据故事需要创建合适的角色",
-        character_count_guide=character_count_guide
+        character_count_guide=character_count_guide,
+        naming_constraints=naming_constraints
     )
 
 def get_character_refinement_prompt(

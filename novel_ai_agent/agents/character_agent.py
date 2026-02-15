@@ -56,38 +56,63 @@ class CharacterAgent(BaseAgent):
 
     async def generate_characters(
         self,
-        outline: Outline,
+        outline: Outline = None,
         character_requirements: str = "",
         chapter_count: int = 0,
+        title: str = "",
+        genre: str = "",
+        theme: str = "",
+        user_requirements: str = "",
         **kwargs
     ) -> Dict[str, Any]:
         """
         根据大纲生成角色设定
 
         Args:
-            outline: 故事大纲
+            outline: 故事大纲（可选，如果未提供则使用title/genre/theme参数）
             character_requirements: 用户对角色的特殊要求
             chapter_count: 目标章节数，0则从大纲自动推断
+            title: 小说标题（当outline为None时必需）
+            genre: 小说类型（当outline为None时必需）
+            theme: 小说主题（当outline为None时必需）
+            user_requirements: 用户需求（当outline为None时使用）
 
         Returns:
             Dict: 包含生成的Character对象列表
         """
         try:
-            # 如果未指定章节数，从大纲推断
-            if chapter_count <= 0:
-                chapter_count = len(outline.chapters_plan) if outline.chapters_plan else 20
-
-            # 提取大纲关键信息
-            outline_key_points = self._extract_outline_key_points(outline)
+            # 处理两种模式：有大纲和无大纲
+            if outline is not None:
+                # 模式A：有大纲
+                if chapter_count <= 0:
+                    chapter_count = len(outline.chapters_plan) if outline.chapters_plan else 20
+                outline_key_points = self._extract_outline_key_points(outline)
+                story_title = outline.title
+                story_genre = outline.genre
+                story_theme = outline.theme
+                story_summary = outline.summary
+            else:
+                # 模式B：无大纲（先生成角色的情况）
+                if not title or not genre:
+                    return {
+                        "status": "error",
+                        "message": "生成角色时需要提供title和genre参数"
+                    }
+                chapter_count = chapter_count or 20
+                outline_key_points = "暂无大纲，将根据故事主题和类型自动设计角色"
+                story_title = title
+                story_genre = genre
+                story_theme = theme or "根据故事类型自动确定"
+                story_summary = f"这是一部{genre}类型的小说，主题是{theme}"
 
             # 构建prompt
             user_prompt = get_character_generation_prompt(
-                title=outline.title,
-                genre=outline.genre,
-                summary=outline.summary,
-                theme=outline.theme,
+                title=story_title,
+                genre=story_genre,
+                summary=story_summary,
+                theme=story_theme,
                 outline_key_points=outline_key_points,
-                character_requirements=character_requirements,
+                character_requirements=character_requirements or user_requirements,
                 chapter_count=chapter_count
             )
 

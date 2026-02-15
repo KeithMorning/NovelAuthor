@@ -21,8 +21,6 @@ logging.basicConfig(
 
 # 为关键模块启用 DEBUG 级别
 logging.getLogger('novel_ai_agent.memory').setLevel(logging.DEBUG)
-logging.getLogger('novel_ai_agent.memory.local_embeddings').setLevel(logging.DEBUG)
-logging.getLogger('novel_ai_agent.memory.vector_store').setLevel(logging.DEBUG)
 
 app = typer.Typer(help="小说AI Agent - 基于多Agent协作的AI小说创作系统")
 console = Console()
@@ -130,15 +128,31 @@ def outline(
 def write(
     novel_id: str = typer.Option(..., "--id", "-i", help="小说ID"),
     chapter: int = typer.Option(..., "--chapter", "-c", help="章节号"),
-    expand: bool = typer.Option(True, "--expand/--no-expand", help="是否启用章节规划细化")
+    expand: bool = typer.Option(True, "--expand/--no-expand", help="是否启用章节规划细化"),
+    review: bool = typer.Option(False, "--review/--no-review", help="写完后自动评审"),
+    force: bool = typer.Option(False, "--force", "-f", help="强制重写已存在的章节")
 ):
     """写作指定章节"""
     import asyncio
     from novel_ai_agent.agents.coordinator import CoordinatorAgent
+    from novel_ai_agent.agents.editor_agent import EditorAgent
+    from novel_ai_agent.utils.file_manager import file_manager
 
     console.print(Panel(f"[bold cyan]写作章节[/bold cyan]"))
     console.print(f"小说ID: [yellow]{novel_id}[/yellow]")
-    console.print(f"章节: [yellow]第{chapter}章[/yellow]\n")
+    console.print(f"章节: [yellow]第{chapter}章[/yellow]")
+    if force:
+        console.print(f"[red]模式: 强制重写[/red]\n")
+    else:
+        console.print()
+
+    # 检查章节是否已存在
+    novel = file_manager.load_novel_json(novel_id)
+    if novel and novel.chapters:
+        existing = [c for c in novel.chapters if c.number == chapter]
+        if existing and not force:
+            console.print(f"[yellow]⚠️ 第{chapter}章已存在，使用 --force 强制重写[/yellow]")
+            return
 
     # 调用CoordinatorAgent写作章节
     coordinator = CoordinatorAgent()
@@ -147,7 +161,8 @@ def write(
         result = asyncio.run(coordinator.write_chapter_workflow(
             novel_id=novel_id,
             chapter_number=chapter,
-            enable_expansion=expand
+            enable_expansion=expand,
+            force=force
         ))
 
     if result["status"] == "success":
@@ -163,6 +178,62 @@ def write(
 
         console.print(f"\n[bold]内容预览[/bold] (前200字):")
         console.print(f"[dim]{ch.content[:200]}...[/dim]")
+
+        # 如果启用了自动评审
+        if review:
+            console.print(f"\n[bold cyan]--- 自动评审 ---[/bold cyan]")
+
+            # 加载小说获取角色和大纲
+            novel = file_manager.load_novel_json(novel_id)
+            previous_chapters = [c for c in novel.chapters if c.number < chapter] if novel.chapters else []
+
+            editor = EditorAgent()
+            with console.status(f"[bold green]正在评审第{chapter}章..."):
+                review_result = asyncio.run(editor.comprehensive_review(
+                    chapter=ch,
+                    style=novel.author_style,
+                    characters=novel.characters,
+                    outline=novel.outline,
+                    previous_chapters=previous_chapters if previous_chapters else None,
+                    user_requirements=""
+                ))
+
+            if review_result["status"] == "success":
+                review_data = review_result["review"]
+                console.print(f"\n[bold]评分: {review_data.get('overall_score', 'N/A')}/10[/bold]")
+
+                # 重点显示情节问题
+                plot_issues = review_data.get("plot_issues", {})
+                if plot_issues:
+                    has_jumps = plot_issues.get("has_jumps", False)
+                    has_contradictions = plot_issues.get("has_contradictions", False)
+
+                    if has_jumps or has_contradictions:
+                        console.print(f"\n[bold red]⚠️ 情节问题检测:[/bold red]")
+
+                        if has_jumps:
+                            console.print(f"[yellow]发现情节跳跃:[/yellow]")
+                            for jump in plot_issues.get("jump_details", []):
+                                console.print(f"  • {jump}")
+
+                        if has_contradictions:
+                            console.print(f"[red]发现情节矛盾:[/red]")
+                            for contr in plot_issues.get("contradiction_details", []):
+                                console.print(f"  • {contr}")
+
+                        console.print(f"\n[bold]使用以下命令查看完整评审:[/bold]")
+                        console.print(f"  python main.py review --id {novel_id} --chapter {chapter}")
+                    else:
+                        console.print(f"\n[green]✓ 未发现情节跳跃或矛盾[/green]")
+
+                # 显示修改建议
+                suggestions = review_data.get("revision_suggestions", [])
+                if suggestions:
+                    high_priority = [s for s in suggestions if s.get("priority") == "高"]
+                    if high_priority:
+                        console.print(f"\n[bold yellow]高优先级修改建议:[/bold yellow]")
+                        for s in high_priority:
+                            console.print(f"  • {s.get('area')}: {s.get('suggestion')}")
     else:
         console.print(f"\n[red]✗[/red] {result['message']}")
         if "error" in result:
@@ -173,7 +244,8 @@ def write(
 def write_all(
     novel_id: str = typer.Option(..., "--id", "-i", help="小说ID"),
     start: int = typer.Option(1, "--start", "-s", help="起始章节号（用于从中断处恢复）"),
-    expand: bool = typer.Option(True, "--expand/--no-expand", help="是否启用章节规划细化")
+    expand: bool = typer.Option(True, "--expand/--no-expand", help="是否启用章节规划细化"),
+    force: bool = typer.Option(False, "--force", "-f", help="强制重写已存在的章节")
 ):
     """按顺序写作全部章节"""
     import asyncio
@@ -183,7 +255,11 @@ def write_all(
 
     console.print(Panel(f"[bold cyan]批量写作全部章节[/bold cyan]"))
     console.print(f"小说ID: [yellow]{novel_id}[/yellow]")
-    console.print(f"起始章节: [yellow]第{start}章[/yellow]\n")
+    console.print(f"起始章节: [yellow]第{start}章[/yellow]")
+    if force:
+        console.print(f"[red]模式: [bold]强制重写[/bold]（将覆盖已存在的章节）[/red]\n")
+    else:
+        console.print()
 
     # 加载小说信息
     novel = file_manager.load_novel_json(novel_id)
@@ -197,17 +273,29 @@ def write_all(
 
     total_chapters = len(novel.outline.chapters_plan)
     written = {ch.number for ch in novel.chapters} if novel.chapters else set()
-    to_write = [cp for cp in novel.outline.chapters_plan
-                if cp.chapter_number >= start and cp.chapter_number not in written]
+
+    if force:
+        # force=True: 重写所有从 start 开始的章节
+        to_write = [cp for cp in novel.outline.chapters_plan
+                    if cp.chapter_number >= start]
+    else:
+        # force=False: 跳过已存在的章节
+        to_write = [cp for cp in novel.outline.chapters_plan
+                    if cp.chapter_number >= start and cp.chapter_number not in written]
 
     if not to_write:
-        console.print("[green]✓[/green] 所有章节已完成，无需写作")
+        action = "重写" if force else "写作"
+        console.print(f"[green]✓[/green] 所有章节已完成，无需{action}")
         return
 
     console.print(f"[bold]小说[/bold]: {novel.title}")
     console.print(f"[bold]总章节[/bold]: {total_chapters} 章")
     console.print(f"[bold]已完成[/bold]: {len(written)} 章")
-    console.print(f"[bold]待写作[/bold]: {len(to_write)} 章\n")
+    console.print(f"[bold]待写作[/bold]: {len(to_write)} 章")
+    if force:
+        console.print(f"[yellow]⚠️  将重写 {len([cp for cp in to_write if cp.chapter_number in written])} 个已存在章节[/yellow]\n")
+    else:
+        console.print()
 
     # 使用 Progress 显示进度
     coordinator = CoordinatorAgent()
@@ -243,7 +331,8 @@ def write_all(
             novel_id=novel_id,
             start_chapter=start,
             progress_callback=progress_callback,
-            enable_expansion=expand
+            enable_expansion=expand,
+            force=force
         ))
 
     # 显示结果
@@ -350,29 +439,18 @@ def resume(
 
     # 5. 执行恢复操作
     if needs_memory_load and not skip_memory:
-        if force_reload:
-            console.print(f"\n[yellow]⚠️  强制重新加载模式：将清除旧的记忆数据[/yellow]")
-        console.print(f"\n[cyan]正在加载小说到记忆系统...[/cyan]")
+        console.print(f"\n[cyan]正在初始化记忆系统...[/cyan]")
 
         try:
-            with console.status("[bold green]加载记忆中..."):
-                memory_manager = get_memory_manager(novel_id)
-                memory_manager.load_novel_to_memory(novel, force_reload=force_reload)
-
-            console.print(f"[green]✓[/green] 小说已成功加载到记忆系统")
-
-            # 显示记忆统计
-            stats = memory_manager.vector_store.get_collection_stats(novel_id)
+            memory_manager = get_memory_manager(novel_id)
+            stats = memory_manager.get_memory_stats()
             console.print(f"\n[bold]记忆统计:[/bold]")
-            console.print(f"  角色记录: {stats.get('characters', 0)}")
-            console.print(f"  情节记录: {stats.get('plots', 0)}")
-            console.print(f"  章节记录: {stats.get('chapters', 0)}")
-
+            console.print(f"  最近章节: {stats.get('recent_chapters_count', 0)}")
+            console.print(f"  对话轮次: {stats.get('conversation_turns', 0)}")
             console.print(f"\n[bold green]✓ 小说恢复完成！[/bold green]")
 
         except Exception as e:
-            console.print(f"\n[red]✗[/red] 加载记忆失败: {e}")
-            console.print(f"\n[yellow]提示:[/yellow] 可以使用 [cyan]--skip-memory[/cyan] 跳过记忆加载")
+            console.print(f"\n[red]✗[/red] 加载失败: {e}")
             return
 
     elif skip_memory:
@@ -626,6 +704,36 @@ def review(
         console.print(f"  叙事节奏: {scores.get('pacing', 'N/A')}")
         console.print(f"  情感表达: {scores.get('emotional_impact', 'N/A')}")
 
+        # 重点显示情节跳跃和矛盾
+        plot_issues = review_result.get("plot_issues", {})
+        if plot_issues:
+            has_jumps = plot_issues.get("has_jumps", False)
+            has_contradictions = plot_issues.get("has_contradictions", False)
+
+            if has_jumps or has_contradictions:
+                console.print(f"\n[bold red]⚠️ 情节问题检测[/bold red]:")
+
+                if has_jumps:
+                    console.print(f"\n[bold yellow]发现情节跳跃:[/bold yellow]")
+                    for jump in plot_issues.get("jump_details", []):
+                        console.print(f"  • {jump}")
+
+                if has_contradictions:
+                    console.print(f"\n[bold red]发现情节矛盾:[/bold red]")
+                    for contr in plot_issues.get("contradiction_details", []):
+                        console.print(f"  • {contr}")
+
+                inconsistencies = plot_issues.get("inconsistencies", [])
+                if inconsistencies:
+                    console.print(f"\n[bold yellow]前后不一致:[/bold yellow]")
+                    for inc in inconsistencies:
+                        console.print(f"  • {inc}")
+
+                console.print(f"\n[bold]建议操作:[/bold]")
+                console.print("  1. 使用 --fix 参数自动修复")
+                console.print("  2. 使用 edit-outline 修改大纲")
+                console.print("  3. 手动调整章节内容")
+
         console.print(f"\n[bold green]优点[/bold green]:")
         for strength in review_result.get("strengths", []):
             console.print(f"  + {strength}")
@@ -634,6 +742,17 @@ def review(
             console.print(f"\n[bold yellow]需要改进[/bold yellow]:")
             for weakness in review_result.get("weaknesses", []):
                 console.print(f"  - {weakness}")
+
+        # 显示修改建议
+        revision_suggestions = review_result.get("revision_suggestions", [])
+        if revision_suggestions:
+            console.print(f"\n[bold cyan]修改建议[/bold cyan]:")
+            for i, sug in enumerate(revision_suggestions, 1):
+                priority = sug.get("priority", "")
+                area = sug.get("area", "")
+                suggestion = sug.get("suggestion", "")
+                priority_color = "red" if priority == "高" else "yellow" if priority == "中" else "green"
+                console.print(f"  {i}. [{priority_color}]{priority}[/{priority_color}] {area}: {suggestion}")
 
         console.print(f"\n[bold]总体评价[/bold]:")
         console.print(f"{review_result.get('summary', '')}")
@@ -799,16 +918,82 @@ def search_memory(
 
 
 @app.command()
+def edit_outline(
+    novel_id: str = typer.Option(..., "--id", "-i", help="小说ID"),
+    feedback: str = typer.Option(..., "--feedback", "-f", help="修改意见"),
+    chapter: int = typer.Option(None, "--chapter", "-c", help="可选：指定修改某一章")
+):
+    """修改小说大纲"""
+    import asyncio
+    from novel_ai_agent.agents.coordinator import CoordinatorAgent
+
+    console.print(Panel(f"[bold cyan]修改大纲[/bold cyan]"))
+    console.print(f"小说ID: [yellow]{novel_id}[/yellow]")
+    if chapter:
+        console.print(f"修改章节: [yellow]第{chapter}章[/yellow]")
+    console.print(f"修改意见: [yellow]{feedback}[/yellow]\n")
+
+    coordinator = CoordinatorAgent()
+
+    with console.status(f"[bold green]正在修改大纲..."):
+        result = asyncio.run(coordinator.edit_outline_workflow(
+            novel_id=novel_id,
+            feedback=feedback,
+            chapter_number=chapter
+        ))
+
+    if result["status"] == "success":
+        console.print(f"\n[green]✓[/green] {result['message']}")
+    else:
+        console.print(f"\n[red]✗[/red] {result['message']}")
+        if "error" in result:
+            console.print(f"[red]错误详情: {result['error']}[red]")
+
+
+@app.command()
+def edit_character(
+    novel_id: str = typer.Option(..., "--id", "-i", help="小说ID"),
+    name: str = typer.Option(..., "--name", "-n", help="角色名"),
+    feedback: str = typer.Option(..., "--feedback", "-f", help="修改意见")
+):
+    """修改角色设定"""
+    import asyncio
+    from novel_ai_agent.agents.coordinator import CoordinatorAgent
+
+    console.print(Panel(f"[bold cyan]修改角色[/bold cyan]"))
+    console.print(f"小说ID: [yellow]{novel_id}[/yellow]")
+    console.print(f"角色名: [yellow]{name}[/yellow]")
+    console.print(f"修改意见: [yellow]{feedback}[/yellow]\n")
+
+    coordinator = CoordinatorAgent()
+
+    with console.status(f"[bold green]正在修改角色..."):
+        result = asyncio.run(coordinator.edit_character_workflow(
+            novel_id=novel_id,
+            character_name=name,
+            feedback=feedback
+        ))
+
+    if result["status"] == "success":
+        console.print(f"\n[green]✓[/green] {result['message']}")
+    else:
+        console.print(f"\n[red]✗[/red] {result['message']}")
+        if "error" in result:
+            console.print(f"[red]错误详情: {result['error']}[red]")
+
+
+@app.command()
 def version():
     """显示版本信息"""
     console.print(Panel("[bold cyan]小说AI Agent[/bold cyan]"))
-    console.print("版本: [yellow]0.3.0[/yellow] (Phase 3 - 高级功能)")
+    console.print("版本: [yellow]0.4.0[/yellow] (Phase 4 - 大纲角色修改)")
     console.print("作者: Keith Xi")
     console.print("\n[bold]已实现功能:[/bold]")
     console.print("- ✅ 多Agent协作创作")
-    console.print("- ✅ 大纲规划和角色设定")
+    console.print("- ✅ 大纲规划和角色设定（先生成角色再生成大纲）")
     console.print("- ✅ 智能章节创作")
     console.print("- ✅ 章节编辑和润色")
+    console.print("- ✅ 大纲和角色修改（支持单章修改）")
     console.print("- ✅ 向量记忆系统")
     console.print("- ✅ 10种作家风格")
     console.print("- ✅ 交互式对话修改")

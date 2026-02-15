@@ -17,6 +17,7 @@ from ..prompts.writing_prompts import (
     get_chapter_writing_prompt,
     get_chapter_revision_prompt
 )
+from ..utils.logger import get_logger, WorkflowStep, LogLevel
 
 
 class WriterAgent(BaseAgent):
@@ -38,6 +39,7 @@ class WriterAgent(BaseAgent):
         )
         self.style_name = style_name
         self.style = get_style(style_name)
+        self.logger = get_logger("WriterAgent")
 
     async def execute(self, **kwargs) -> Dict[str, Any]:
         """
@@ -112,12 +114,16 @@ class WriterAgent(BaseAgent):
             # 构建写作系统prompt
             system_prompt = get_writing_system_prompt(self.style.prompt_template)
 
+            # 获取目标字数（优先使用 settings 默认值，避免大纲旧值）
+            from ..config.settings import Settings
+            target_words = Settings().default_chapter_words
+
             # 构建用户prompt
             user_prompt = get_chapter_writing_prompt(
                 chapter_number=chapter_plan.chapter_number,
                 chapter_title=chapter_plan.title,
                 chapter_summary=chapter_summary,
-                target_words=chapter_plan.estimated_words,
+                target_words=target_words,
                 story_background=story_background,
                 characters_info=characters_info,
                 previous_content=previous_content,
@@ -125,14 +131,49 @@ class WriterAgent(BaseAgent):
                 style=self.style_name
             )
 
-            # 调用LLM
+            # 调用LLM - 强制设置更高的 max_tokens
             messages = [
                 SystemMessage(content=system_prompt),
                 HumanMessage(content=user_prompt)
             ]
 
+            # 记录API调用信息到日志
+            self.logger.log(
+                level=LogLevel.INFO,
+                step=WorkflowStep.CHAPTER_WRITING,
+                message=f"API请求: model={self.llm.model_name}, max_tokens={self.llm.max_tokens}, prompt长度={len(user_prompt)}"
+            )
+
+            # 调用LLM
             response = await self.llm.ainvoke(messages)
             content = response.content
+
+            # 记录API响应信息到日志
+            usage_info = {}
+            if hasattr(response, 'usage_metadata'):
+                usage_info = response.usage_metadata
+            elif hasattr(response, 'response_metadata') and 'token_usage' in response.response_metadata:
+                usage_info = response.response_metadata['token_usage']
+
+            self.logger.log(
+                level=LogLevel.INFO,
+                step=WorkflowStep.CHAPTER_WRITING,
+                message=f"API响应: content长度={len(content)}, usage={usage_info}"
+            )
+
+            # 计算输入token数量（粗略估算）
+            input_text = system_prompt + user_prompt
+            input_tokens_estimate = len(input_text) // 3
+
+            # 计算输出token数量
+            output_tokens_estimate = len(content) // 3
+
+            # 记录章节写作统计到日志
+            self.logger.log(
+                level=LogLevel.INFO,
+                step=WorkflowStep.CHAPTER_WRITING,
+                message=f"章节写作完成: 第{chapter_plan.chapter_number}章, 输入~{input_tokens_estimate}, 输出~{output_tokens_estimate}, 内容长度{len(content)}"
+            )
 
             # 创建Chapter对象
             chapter = Chapter(
@@ -159,13 +200,17 @@ class WriterAgent(BaseAgent):
                 chapter.emotional_tone = digest.get("emotional_tone", "")
             except Exception as e:
                 # 提取失败不影响核心功能，降级为使用大纲摘要
-                print(f"[WriterAgent] 结构化摘要提取失败（不影响核心功能）: {e}")
+                self.logger.log(
+                    level=LogLevel.WARNING,
+                    step=WorkflowStep.CHAPTER_WRITING,
+                    message=f"结构化摘要提取失败: {e}"
+                )
 
             return {
                 "status": "success",
                 "chapter": chapter,
                 "word_count": chapter.word_count,
-                "target_words": chapter_plan.estimated_words
+                "target_words": target_words
             }
 
         except Exception as e:
@@ -357,6 +402,8 @@ class WriterAgent(BaseAgent):
             info_lines.append(f"- 动机: {char.motivation}")
             if char.skills:
                 info_lines.append(f"- 技能: {char.skills}")
+            if char.quirk:
+                info_lines.append(f"- 个人特点: {char.quirk}")
             info_lines.append("")
 
         return "\n".join(info_lines)
@@ -365,18 +412,34 @@ class WriterAgent(BaseAgent):
         self,
         previous_chapters: Optional[List[Chapter]],
         outline: Optional[Outline] = None,
-        current_chapter_num: int = 1
+        current_chapter_num: int = 1,
+        full_context_mode: bool = True  # 模式B：完整上下文
     ) -> str:
         """
-        准备前文内容摘要（含伏笔追踪、剧情大纲和角色状态）
+        准备前文内容
 
-        构建结构：
-        1. 核心剧情线索（从大纲中提取当前相关的核心转折）
-        2. 待回收的伏笔（自动计算 planted - resolved）
-        3. 全部章节的实际摘要
-        4. 角色当前状态（最新章节）
-        5. 最近2章结尾片段（帮助衔接）
+        Args:
+            previous_chapters: 前文章节列表
+            outline: 大纲
+            current_chapter_num: 当前章节号
+            full_context_mode: 是否使用完整上下文模式（模式B）
+
+        构建结构（摘要模式）:
+            1. 核心剧情线索
+            2. 待回收的伏笔
+            3. 全部章节摘要
+            4. 角色当前状态
+            5. 最近2章结尾片段
+
+        构建结构（完整模式）:
+            1. 核心剧情线索
+            2. 全部章节完整内容
+            3. 伏笔追踪
+            4. 角色状态约束
         """
+        # 模式B：完整上下文
+        if full_context_mode:
+            return self._prepare_full_context(previous_chapters, outline, current_chapter_num)
         sections = []
 
         # 1. 核心剧情线索
@@ -451,6 +514,83 @@ class WriterAgent(BaseAgent):
                 tail = ch.content[-800:] if len(ch.content) > 800 else ch.content
                 sections.append(f"结尾片段: ...{tail}")
             sections.append("")
+
+        return "\n".join(sections)
+
+    def _prepare_full_context(
+        self,
+        previous_chapters: Optional[List[Chapter]],
+        outline: Optional[Outline] = None,
+        current_chapter_num: int = 1
+    ) -> str:
+        """
+        准备完整上下文（模式B）
+        将所有前文内容完整纳入上下文窗口
+        """
+        sections = []
+
+        if not previous_chapters:
+            return "【前文】这是第一章，无前文内容。"
+
+        # 1. 核心剧情线索
+        if outline and outline.plot_points:
+            relevant_points = []
+            for point in outline.plot_points:
+                try:
+                    range_str = point.chapter_range.replace("第", "").replace("章", "")
+                    if "-" in range_str:
+                        start, end = map(int, range_str.split("-"))
+                        if start <= current_chapter_num:
+                            relevant_points.append(f"- 【{point.name}】({point.chapter_range}): {point.description}")
+                    else:
+                        num = int(range_str)
+                        if num <= current_chapter_num:
+                            relevant_points.append(f"- 【{point.name}】(第{num}章): {point.description}")
+                except:
+                    relevant_points.append(f"- 【{point.name}】: {point.description}")
+
+            if relevant_points:
+                sections.append("【核心剧情线索】")
+                sections.extend(relevant_points)
+                sections.append("")
+
+        # 2. 伏笔追踪
+        all_unresolved_hooks = []
+        all_resolved = set()
+        for ch in previous_chapters:
+            all_resolved.update(ch.hooks_resolved)
+        for ch in previous_chapters:
+            for hook in ch.hooks_planted:
+                if hook not in all_resolved:
+                    all_unresolved_hooks.append(f"第{ch.number}章: {hook}")
+
+        if all_unresolved_hooks:
+            sections.append("【待回收的伏笔】")
+            for hook in all_unresolved_hooks:
+                sections.append(f"- {hook}")
+            sections.append("")
+
+        # 3. 角色当前状态
+        latest_states = {}
+        for ch in previous_chapters:
+            latest_states.update(ch.character_states)
+        if latest_states:
+            sections.append("【角色当前状态】（必须严格遵守）")
+            for name, state in latest_states.items():
+                # 标记不可出场的角色
+                if "死" in state or "亡" in state or "消失" in state:
+                    sections.append(f"- ⚠️ {name}: {state} （已死亡/消失，绝对不能出场）")
+                else:
+                    sections.append(f"- {name}: {state}")
+            sections.append("")
+
+        # 4. 全部章节完整内容（核心！需要128k上下文窗口）
+        sections.append("【前文完整内容】（必须承接以下内容）")
+        for ch in previous_chapters:
+            sections.append(f"\n{'='*40}")
+            sections.append(f"第{ch.number}章 {ch.title}")
+            sections.append(f"{'='*40}")
+            sections.append(ch.content)
 
         return "\n".join(sections)
 

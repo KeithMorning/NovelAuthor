@@ -263,13 +263,9 @@ async def delete_novel(novel_id: str) -> ApiResponse:
         # 删除小说文件
         file_manager.delete_novel(novel_id)
 
-        # 删除记忆数据
-        try:
-            from novel_ai_agent.memory.vector_store import get_vector_store
-            vector_store = get_vector_store()
-            vector_store.delete_novel_collections(novel_id)
-        except Exception as e:
-            print(f"删除记忆数据失败: {str(e)}")
+        # 清除记忆缓存
+        from novel_ai_agent.memory import clear_memory_cache
+        clear_memory_cache()
 
         return ApiResponse(
             success=True,

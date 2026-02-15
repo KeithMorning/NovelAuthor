@@ -103,12 +103,14 @@ python main.py init
 | 类别 | 命令 | 描述 | 主要参数 |
 |------|------|------|----------|
 | **初始化** | `init` | 初始化项目配置 | 无 |
-| **小说管理** | `create` | 创建新小说（含大纲） | `--title` `--genre` `--theme` |
+| **小说管理** | `create` | 创建新小说（含大纲和角色） | `--title` `--genre` `--theme` |
 | | `outline` | 生成/更新大纲 | `--id` `--theme` |
 | | `list-novels` | 列出所有小说 | 无 |
 | | `check` | 检查内容一致性 | `--id` |
 | | `export` | 导出为Markdown | `--id` `--output` |
 | | `resume` | 从中断继续 | `--id` |
+| | `edit-outline` | 修改大纲 | `--id` `--feedback` `--chapter` |
+| | `edit-character` | 修改角色 | `--id` `--name` `--feedback` |
 | **章节创作** | `write` | 写作单个章节 | `--id` `--chapter` |
 | | `write-all` | 批量写作全部章节 | `--id` `--start` |
 | | `polish` | 润色章节 | `--id` `--chapter` |
@@ -192,6 +194,19 @@ python main.py resume --id novel_xxx
 
 # 跳过大纲生成直接继续写作
 python main.py resume --id novel_xxx --skip-outline
+```
+
+##### 场景 5: 修改大纲和角色
+```bash
+# 修改整个大纲的方向
+python main.py edit-outline --id novel_xxx --feedback "增加更多悬疑反转"
+
+# 修改特定章节的规划
+python main.py edit-outline --id novel_xxx --feedback "第3章需要更激烈的冲突" --chapter 3
+
+# 修改角色设定
+python main.py edit-character --id novel_xxx --name "主角" --feedback "增加一些缺点，让角色更真实"
+```
 
 # 强制重新加载记忆系统
 python main.py resume --id novel_xxx --force-reload
@@ -291,20 +306,54 @@ python main.py resume --id novel_001 --skip-outline --force-reload
 - `--skip-outline`: 跳过大纲生成（可选）
 - `--force-reload`: 强制重新加载记忆（可选）
 
+##### `edit-outline` - 修改大纲
+修改小说大纲，支持全局修改或指定单章修改
+
+```bash
+# 修改整个大纲
+python main.py edit-outline --id novel_001 --feedback "增加更多悬疑元素"
+
+# 修改特定章节
+python main.py edit-outline --id novel_001 --feedback "第3章需要更多动作场景" --chapter 3
+```
+
+**参数**:
+- `--id, -i`: 小说ID（必填）
+- `--feedback, -f`: 修改意见（必填）
+- `--chapter, -c`: 指定章节号（可选，不指定则修改整个大纲）
+
+##### `edit-character` - 修改角色
+修改角色设定
+
+```bash
+python main.py edit-character --id novel_001 --name "主角" --feedback "增加一些叛逆性格"
+```
+
+**参数**:
+- `--id, -i`: 小说ID（必填）
+- `--name, -n`: 角色名（必填）
+- `--feedback, -f`: 修改意见（必填）
+
 ---
 
 #### 3. 章节创作和编辑
 
 ##### `write` - 写作章节
-AI 自动创作指定章节
+AI 自动创作指定章节，支持完成后自动评审
 
 ```bash
+# 基础写作
 python main.py write --id novel_001 --chapter 1
+
+# 写完后自动评审（检测情节跳跃和矛盾）
+python main.py write --id novel_001 --chapter 1 --review
 ```
 
 **参数**:
 - `--id, -i`: 小说ID（必填）
 - `--chapter, -c`: 章节编号（必填）
+- `--expand/--no-expand`: 是否启用章节规划细化（默认启用）
+- `--review/--no-review`: 写完后是否自动评审（默认不评审）
 
 ##### `write-all` - 批量写作全部章节
 按顺序自动写作所有未完成的章节，支持断点恢复

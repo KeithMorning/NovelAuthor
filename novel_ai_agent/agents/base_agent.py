@@ -4,11 +4,20 @@ Agent基础类
 支持多个LLM提供商
 """
 from abc import ABC, abstractmethod
-from typing import Optional, Union
+from typing import Optional
+import httpx
 from langchain_anthropic import ChatAnthropic
 from langchain_openai import ChatOpenAI, AzureChatOpenAI
 from langchain_core.language_models import BaseChatModel
 from ..config.settings import get_settings
+
+
+def get_proxy_client() -> Optional[httpx.AsyncClient]:
+    """获取代理客户端，用于Charles抓包"""
+    settings = get_settings()
+    if settings.proxy_enabled:
+        return httpx.AsyncClient(proxy=settings.proxy_url, verify=False)
+    return None
 
 
 class BaseAgent(ABC):
@@ -57,7 +66,15 @@ class BaseAgent(ABC):
                 anthropic_api_url=self.settings.anthropic_api_base,
             )
 
-        elif provider == "openai":
+        # 获取代理客户端（用于Charles抓包）
+        proxy_client = get_proxy_client()
+
+        # 构建参数
+        common_kwargs = {}
+        if proxy_client is not None:
+            common_kwargs["http_async_client"] = proxy_client
+
+        if provider == "openai":
             return ChatOpenAI(
                 model=model_name,
                 temperature=temperature,
@@ -65,19 +82,22 @@ class BaseAgent(ABC):
                 openai_api_key=self.settings.openai_api_key,
                 openai_api_base=self.settings.openai_api_base,
                 organization=self.settings.openai_organization,
+                **common_kwargs,
             )
 
-        elif provider == "deepseek":
-            # DeepSeek使用OpenAI兼容API
+        if provider == "deepseek":
+            # DeepSeek使用OpenAI兼容API，禁用缓存确保每次生成都是新的
             return ChatOpenAI(
                 model=model_name,
                 temperature=temperature,
                 max_tokens=max_tokens,
                 openai_api_key=self.settings.deepseek_api_key,
                 openai_api_base=self.settings.deepseek_api_base,
+                extra_body={"enable_cache": False},
+                **common_kwargs,
             )
 
-        elif provider == "azure":
+        if provider == "azure":
             return AzureChatOpenAI(
                 azure_deployment=self.settings.azure_openai_deployment,
                 azure_endpoint=self.settings.azure_openai_endpoint,
@@ -85,6 +105,7 @@ class BaseAgent(ABC):
                 api_version=self.settings.azure_openai_api_version,
                 temperature=temperature,
                 max_tokens=max_tokens,
+                **common_kwargs,
             )
 
         else:

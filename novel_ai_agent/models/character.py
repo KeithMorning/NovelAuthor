@@ -21,6 +21,7 @@ class Character(BaseModel):
     )
     arc: Optional[str] = Field(None, description="角色发展弧线")
     skills: Optional[str] = Field(None, description="特殊技能或能力")
+    quirk: Optional[str] = Field(None, description="个人怪癖/小特点")
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
 
@@ -46,6 +47,9 @@ class Character(BaseModel):
 
         if self.arc:
             md += f"**角色发展**: {self.arc}\n\n"
+
+        if self.quirk:
+            md += f"**个人特点**: {self.quirk}\n\n"
 
         return md
 

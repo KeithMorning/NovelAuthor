@@ -194,14 +194,27 @@ def get_comprehensive_review_prompt(
     if user_requirements:
         requirements_text = f"\n**用户特别关注**（请在评审中重点评估以下方面）：\n{user_requirements}\n"
 
-    return f"""请对以下章节进行全面评审，包括：
-1. 文字质量：语法、用词、句式
-2. 风格一致性：是否符合指定风格
-3. 情节合理性：逻辑是否通顺
-4. 角色一致性：是否符合人设
-5. 叙事节奏：节奏是否合适
-6. 情感表达：情感是否到位
-7. AI痕迹检测：是否存在排比对仗、概括定义句、推演报告体、百分比结论、术语堆砌、模式化收束升华等AI式写作痕迹
+    return f"""请对以下章节进行全面评审，特别关注**情节跳跃和矛盾**：
+
+## 必须重点检查的项目
+
+### 1. 情节跳跃检测
+- 本章与前文是否自然衔接？是否存在跳跃？
+- 场景转换是否有合理过渡？
+- 事件发展是否有因果关系？
+
+### 2. 情节矛盾检测
+- 本章内容是否与前文设定矛盾？（时间、地点、人物状态等）
+- 角色行为是否符合之前的性格发展？
+- 世界观设定是否前后一致？
+
+### 3. 其他评审项
+- 文字质量：语法、用词、句式
+- 风格一致性：是否符合指定风格
+- 角色一致性：是否符合人设
+- 叙事节奏：节奏是否合适
+- 情感表达：情感是否到位
+- AI痕迹检测：是否存在排比对仗、概括定义句、推演报告体、百分比结论、术语堆砌、模式化收束升华等AI式写作痕迹
 
 **写作风格**: {style}
 
@@ -229,10 +242,20 @@ def get_comprehensive_review_prompt(
   }},
   "strengths": ["优点1", "优点2", "优点3"],
   "weaknesses": ["缺点1", "缺点2"],
+
+  // 【重点】情节跳跃和矛盾检测结果
+  "plot_issues": {{
+    "has_jumps": true/false,
+    "jump_details": ["跳跃点1描述", "跳跃点2描述"],
+    "has_contradictions": true/false,
+    "contradiction_details": ["矛盾点1描述", "矛盾点2描述"],
+    "inconsistencies": ["前后不一致的设定1", "设定2"]
+  }},
+
   "detailed_feedback": {{
     "writing_quality": "详细反馈",
     "style_consistency": "详细反馈",
-    "plot_logic": "详细反馈",
+    "plot_logic": "详细反馈，包括跳跃和矛盾分析",
     "character_consistency": "详细反馈",
     "pacing": "详细反馈",
     "emotional_impact": "详细反馈",
@@ -246,7 +269,7 @@ def get_comprehensive_review_prompt(
       "reason": "修改理由"
     }}
   ],
-  "summary": "总体评价和建议"
+  "summary": "总体评价和建议，特别说明情节跳跃/矛盾的处理建议"
 }}
 ```
 """

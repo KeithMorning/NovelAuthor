@@ -14,6 +14,7 @@ from ..prompts.outline_prompts import (
     get_outline_refinement_prompt,
     get_chapter_expansion_prompt
 )
+from ..config.settings import Settings
 
 
 class OutlineAgent(BaseAgent):
@@ -171,8 +172,9 @@ class OutlineAgent(BaseAgent):
         genre: str,
         theme: str,
         chapter_count: int = 20,
-        words_per_chapter: int = 3000,
+        words_per_chapter: int = Settings().default_chapter_words,
         user_requirements: str = "",
+        character_info: str = "",
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -185,6 +187,7 @@ class OutlineAgent(BaseAgent):
             chapter_count: 章节数
             words_per_chapter: 每章字数
             user_requirements: 用户额外需求
+            character_info: 角色设定信息
 
         Returns:
             Dict: 包含生成的Outline对象
@@ -197,7 +200,8 @@ class OutlineAgent(BaseAgent):
                 theme=theme,
                 chapter_count=chapter_count,
                 words_per_chapter=words_per_chapter,
-                user_requirements=user_requirements
+                user_requirements=user_requirements,
+                character_info=character_info
             )
 
             # 调用LLM（使用 JSON Output Mode）
@@ -237,6 +241,7 @@ class OutlineAgent(BaseAgent):
         self,
         current_outline: Outline,
         user_feedback: str,
+        chapter_number: int = None,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -245,11 +250,81 @@ class OutlineAgent(BaseAgent):
         Args:
             current_outline: 当前大纲
             user_feedback: 用户反馈
+            chapter_number: 可选，指定修改某一章（更精准）
 
         Returns:
             Dict: 包含优化后的Outline对象
         """
         try:
+            # 如果指定了章节号，只修改那一章（更精准）
+            if chapter_number:
+                # 找到对应的章节规划
+                target_chapter = None
+                for cp in current_outline.chapters_plan:
+                    if cp.chapter_number == chapter_number:
+                        target_chapter = cp
+                        break
+
+                if not target_chapter:
+                    return {"status": "error", "message": f"未找到第{chapter_number}章"}
+
+                # 构建针对单章的修改prompt
+                chapter_info = f"""**当前第{chapter_number}章规划**:
+- 标题: {target_chapter.title}
+- 梗概: {target_chapter.summary}
+- 关键事件: {', '.join(target_chapter.key_events)}
+- 涉及角色: {', '.join(target_chapter.characters_involved)}
+
+**用户修改意见**: {user_feedback}
+
+请只修改第{chapter_number}章的规划，保持其他章节不变。"""
+
+                # 构建prompt
+                user_prompt = f"""请根据用户意见修改大纲中的特定章节。
+
+{chapter_info}
+
+请以JSON格式输出修改后的第{chapter_number}章规划（保持其他章节不变）:
+```json
+{{
+  "chapter_number": {chapter_number},
+  "title": "修改后的标题",
+  "summary": "修改后的梗概",
+  "key_events": ["修改后的事件1", "事件2"],
+  "characters_involved": ["角色1", "角色2"],
+  "estimated_words": Settings().default_chapter_words
+}}
+```"""
+
+                # 调用LLM
+                json_llm = self._get_json_llm()
+                # 增加max_tokens以支持更长输出
+                json_llm = json_llm.bind(max_tokens=8192)
+
+                messages = [
+                    SystemMessage(content=OUTLINE_SYSTEM_PROMPT),
+                    HumanMessage(content=user_prompt)
+                ]
+
+                response = await json_llm.ainvoke(messages)
+                content = response.content
+
+                # 解析JSON响应
+                chapter_data = extract_json_from_response(content, "debug_chapter")
+
+                # 更新对应章节
+                for i, cp in enumerate(current_outline.chapters_plan):
+                    if cp.chapter_number == chapter_number:
+                        current_outline.chapters_plan[i] = ChapterPlan(**chapter_data)
+                        break
+
+                return {
+                    "status": "success",
+                    "outline": current_outline,
+                    "changed": f"第{chapter_number}章"
+                }
+
+            # 原有逻辑：全大纲修改
             # 将当前大纲转为JSON字符串
             current_outline_str = current_outline.model_dump_json(indent=2, ensure_ascii=False)
 
@@ -261,6 +336,9 @@ class OutlineAgent(BaseAgent):
 
             # 调用LLM（使用 JSON Output Mode）
             json_llm = self._get_json_llm()
+            # 增加max_tokens以支持更长输出
+            json_llm = json_llm.bind(max_tokens=8192)
+
             messages = [
                 SystemMessage(content=OUTLINE_SYSTEM_PROMPT),
                 HumanMessage(content=user_prompt)

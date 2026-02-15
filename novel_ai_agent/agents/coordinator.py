@@ -151,19 +151,64 @@ class CoordinatorAgent(BaseAgent):
                 }
             )
 
-            # 2. 生成大纲
+            # 2. 先生成角色（在大纲之前，以便大纲可以使用角色名）
+            logger.step_start(
+                WorkflowStep.CHARACTER_GENERATION,
+                "开始生成角色"
+            )
+
+            self.character_agent = CharacterAgent()
+            # 先生成角色，不需要outline（因为还没有）
+            char_result = await self.character_agent.generate_characters(
+                outline=None,
+                chapter_count=chapter_count,
+                title=title,
+                genre=genre,
+                theme=theme,
+                user_requirements=user_requirements
+            )
+
+            if char_result["status"] != "success":
+                logger.step_error(
+                    WorkflowStep.CHARACTER_GENERATION,
+                    "角色生成失败",
+                    Exception(char_result.get("message", "Unknown error")),
+                    details=char_result
+                )
+                return char_result
+
+            # 保存角色到novel对象（临时存储，用于后续生成大纲）
+            temp_characters = char_result["characters"]
+            for character in temp_characters:
+                novel.add_character(character)
+
+            logger.step_success(
+                WorkflowStep.CHARACTER_GENERATION,
+                f"角色生成成功，创建了 {len(novel.characters)} 个角色",
+                details={
+                    "character_count": len(novel.characters),
+                    "characters": [char.name for char in novel.characters]
+                }
+            )
+
+            # 3. 生成大纲（使用已创建的角色信息）
             logger.step_start(
                 WorkflowStep.OUTLINE_GENERATION,
                 f"开始生成大纲，目标章节数: {chapter_count}"
             )
 
             self.outline_agent = OutlineAgent()
+
+            # 格式化角色信息传递给大纲生成
+            character_info = _format_character_info_for_outline(novel.characters)
+
             outline_result = await self.outline_agent.generate_outline(
                 title=title,
                 genre=genre,
                 theme=theme,
                 chapter_count=chapter_count,
-                user_requirements=user_requirements
+                user_requirements=user_requirements,
+                character_info=character_info
             )
 
             if outline_result["status"] != "success":
@@ -183,39 +228,6 @@ class CoordinatorAgent(BaseAgent):
                 details={
                     "chapter_count": len(novel.outline.chapters_plan),
                     "plot_points": len(novel.outline.plot_points)
-                }
-            )
-
-            # 3. 生成角色
-            logger.step_start(
-                WorkflowStep.CHARACTER_GENERATION,
-                "开始生成角色"
-            )
-
-            self.character_agent = CharacterAgent()
-            char_result = await self.character_agent.generate_characters(
-                outline=novel.outline,
-                chapter_count=chapter_count
-            )
-
-            if char_result["status"] != "success":
-                logger.step_error(
-                    WorkflowStep.CHARACTER_GENERATION,
-                    "角色生成失败",
-                    Exception(char_result.get("message", "Unknown error")),
-                    details=char_result
-                )
-                return char_result
-
-            for character in char_result["characters"]:
-                novel.add_character(character)
-
-            logger.step_success(
-                WorkflowStep.CHARACTER_GENERATION,
-                f"角色生成成功，创建了 {len(novel.characters)} 个角色",
-                details={
-                    "character_count": len(novel.characters),
-                    "characters": [char.name for char in novel.characters]
                 }
             )
 
@@ -296,18 +308,20 @@ class CoordinatorAgent(BaseAgent):
         novel_id: str,
         start_chapter: int = 1,
         progress_callback=None,
-        enable_expansion: bool = True
+        enable_expansion: bool = True,
+        force: bool = False
     ) -> Dict[str, Any]:
         """
         批量写作全部章节工作流
 
-        按顺序从 start_chapter 开始写作所有章节，跳过已完成的章节。
+        按顺序从 start_chapter 开始写作所有章节，跳过已完成的章节（除非 force=True）。
         某章失败时停止并返回已完成的信息，支持通过 start_chapter 从断点恢复。
 
         Args:
             novel_id: 小说ID
             start_chapter: 起始章节号（默认1）
             progress_callback: 可选的进度回调函数，签名为 (chapter_number, total, status, message)
+            force: 是否强制重写已存在的章节（默认False）
 
         Returns:
             Dict: 包含写作结果
@@ -331,16 +345,25 @@ class CoordinatorAgent(BaseAgent):
             total_chapters = len(novel.outline.chapters_plan)
             written_numbers = {ch.number for ch in novel.chapters} if novel.chapters else set()
 
-            chapters_to_write = [
-                cp for cp in novel.outline.chapters_plan
-                if cp.chapter_number >= start_chapter and cp.chapter_number not in written_numbers
-            ]
+            if force:
+                # force=True: 重写所有从 start_chapter 开始的章节
+                chapters_to_write = [
+                    cp for cp in novel.outline.chapters_plan
+                    if cp.chapter_number >= start_chapter
+                ]
+            else:
+                # force=False: 跳过已存在的章节
+                chapters_to_write = [
+                    cp for cp in novel.outline.chapters_plan
+                    if cp.chapter_number >= start_chapter and cp.chapter_number not in written_numbers
+                ]
             chapters_to_write.sort(key=lambda x: x.chapter_number)
 
             if not chapters_to_write:
+                action = "重写" if force else "写作"
                 return {
                     "status": "success",
-                    "message": "所有章节已完成，无需写作",
+                    "message": f"所有章节已完成，无需{action}",
                     "novel_id": novel_id,
                     "chapters_written": 0,
                     "total_chapters": total_chapters
@@ -367,7 +390,8 @@ class CoordinatorAgent(BaseAgent):
                 result = await self.write_chapter_workflow(
                     novel_id=novel_id,
                     chapter_number=chapter_num,
-                    enable_expansion=enable_expansion
+                    enable_expansion=enable_expansion,
+                    force=force
                 )
 
                 if result["status"] != "success":
@@ -432,7 +456,8 @@ class CoordinatorAgent(BaseAgent):
         self,
         novel_id: str,
         chapter_number: int,
-        enable_expansion: bool = True
+        enable_expansion: bool = True,
+        force: bool = False
     ) -> Dict[str, Any]:
         """
         章节写作工作流
@@ -440,6 +465,7 @@ class CoordinatorAgent(BaseAgent):
         Args:
             novel_id: 小说ID
             chapter_number: 章节号
+            force: 是否强制重写已存在的章节
 
         Returns:
             Dict: 包含生成的章节
@@ -548,6 +574,11 @@ class CoordinatorAgent(BaseAgent):
             chapter = write_result["chapter"]
 
             # 5. 保存章节
+            if force:
+                # force=True: 删除已存在的章节，重新添加
+                existing = novel.get_chapter(chapter_number)
+                if existing:
+                    novel.chapters = [c for c in novel.chapters if c.number != chapter_number]
             novel.add_chapter(chapter)
             file_manager.save_novel_json(novel)
             file_manager.save_chapter_markdown(chapter, novel_id)
@@ -611,6 +642,133 @@ class CoordinatorAgent(BaseAgent):
             revision_requirements=revision_requirements
         )
 
+    async def edit_outline_workflow(
+        self,
+        novel_id: str,
+        feedback: str,
+        chapter_number: int = None
+    ) -> Dict[str, Any]:
+        """
+        修改大纲工作流
+
+        Args:
+            novel_id: 小说ID
+            feedback: 用户修改意见
+            chapter_number: 可选，指定修改某一章
+
+        Returns:
+            Dict: 修改结果
+        """
+        try:
+            # 加载小说
+            novel = file_manager.load_novel_json(novel_id)
+            if not novel:
+                return {"status": "error", "message": f"未找到小说: {novel_id}"}
+
+            if not novel.outline:
+                return {"status": "error", "message": "小说没有大纲"}
+
+            # 调用OutlineAgent优化大纲
+            self.outline_agent = OutlineAgent()
+            result = await self.outline_agent.refine_outline(
+                current_outline=novel.outline,
+                user_feedback=feedback,
+                chapter_number=chapter_number
+            )
+
+            if result["status"] != "success":
+                return result
+
+            # 更新小说大纲
+            novel.outline = result["outline"]
+            file_manager.save_novel_json(novel)
+            file_manager.save_outline_markdown(novel.outline, novel_id)
+
+            changed_info = result.get("changed", "全大纲")
+            return {
+                "status": "success",
+                "message": f"大纲修改成功 ({changed_info})",
+                "novel_id": novel_id,
+                "changed": changed_info
+            }
+
+        except Exception as e:
+            return {
+                "status": "error",
+                "message": f"修改大纲时出错: {str(e)}",
+                "error": str(e)
+            }
+
+    async def edit_character_workflow(
+        self,
+        novel_id: str,
+        character_name: str,
+        feedback: str
+    ) -> Dict[str, Any]:
+        """
+        修改角色工作流
+
+        Args:
+            novel_id: 小说ID
+            character_name: 要修改的角色名
+            feedback: 用户修改意见
+
+        Returns:
+            Dict: 修改结果
+        """
+        try:
+            # 加载小说
+            novel = file_manager.load_novel_json(novel_id)
+            if not novel:
+                return {"status": "error", "message": f"未找到小说: {novel_id}"}
+
+            # 查找角色
+            target_character = None
+            for char in novel.characters:
+                if char.name == character_name:
+                    target_character = char
+                    break
+
+            if not target_character:
+                return {
+                    "status": "error",
+                    "message": f"未找到角色: {character_name}。可用角色: {[c.name for c in novel.characters]}"
+                }
+
+            # 调用CharacterAgent优化角色
+            self.character_agent = CharacterAgent()
+            result = await self.character_agent.refine_character(
+                character=target_character,
+                refinement_requirements=feedback,
+                story_context=f"小说标题: {novel.title}\n类型: {novel.genre}\n大纲: {novel.outline.summary if novel.outline else '暂无'}"
+            )
+
+            if result["status"] != "success":
+                return result
+
+            # 更新角色
+            updated_char = result["character"]
+            for i, char in enumerate(novel.characters):
+                if char.name == character_name:
+                    novel.characters[i] = updated_char
+                    break
+
+            file_manager.save_novel_json(novel)
+            file_manager.save_characters_markdown(novel.characters, novel_id)
+
+            return {
+                "status": "success",
+                "message": f"角色 '{character_name}' 修改成功",
+                "novel_id": novel_id
+            }
+
+        except Exception as e:
+            return {
+                "status": "error",
+                "message": f"修改角色时出错: {str(e)}",
+                "error": str(e)
+            }
+
     def set_current_novel(self, novel: Novel):
         """设置当前工作的小说"""
         self.current_novel = novel
@@ -633,3 +791,26 @@ class CoordinatorAgent(BaseAgent):
         """清空上下文"""
         self.context.clear()
         self.current_novel = None
+
+
+def _format_character_info_for_outline(characters) -> str:
+    """
+    格式化角色信息以便传递给大纲生成
+
+    Args:
+        characters: Character对象列表
+
+    Returns:
+        str: 格式化后的角色信息
+    """
+    if not characters:
+        return "暂无角色设定"
+
+    info_parts = []
+    for char in characters:
+        part = f"- {char.name}（{char.role}）: {char.personality[:50] if char.personality else '暂无描述'}..."
+        if hasattr(char, 'quirk') and char.quirk:
+            part += f" 个人怪癖: {char.quirk}"
+        info_parts.append(part)
+
+    return "\n".join(info_parts)
