@@ -13,7 +13,7 @@ CHARACTER_SYSTEM_PROMPT = """你是一位专业的角色设计师，擅长创造
 12. **确保角色命名的区分度**：避免名字发音或字形过于相近，确保每个角色有独特的辨识度。
 
 输出要求：
-- 使用YAML格式输出（更适合多行文本，不需要转义引号）
+- 使用JSON格式输出
 - 角色要有鲜明的个性特征
 - 角色动机要合理且能推动情节
 - 角色关系要清晰且有冲突张力
@@ -50,7 +50,7 @@ CHARACTER_GENERATION_PROMPT = """请根据以下小说信息创建角色设定�
 **命名约束**:
 {naming_constraints}
 
-请创建以下角色（以YAML格式输出）：
+请创建以下角色（以JSON格式输出）：
 
 对于每个角色，需要包含：
 1. **基本信息**:
@@ -81,24 +81,27 @@ CHARACTER_GENERATION_PROMPT = """请根据以下小说信息创建角色设定�
 9. **个人怪癖** (新增):
    - quirk: 一个看似无关但有记忆点的个人习惯或小特点
 
-YAML格式示例（YAML格式的优势：多行文本自然，不需要转义引号）：
-```yaml
-characters:
-  - name: 角色名
-    role: 主角
-    personality: |
-      性格描述，可以包含"引号"而不需要转义。
-      支持多行文本，更自然易读。
-    background: |
-      背景故事，可以自由使用标点符号。
-      不用担心引号或其他特殊字符。
-    motivation: 行动动机和目标
-    appearance: 外貌特征
-    skills: 特长、技能
-    relationships:
-      角色2: 关系描述
-      角色3: 关系描述
-    arc: 角色发展弧线
+JSON格式示例：
+```json
+{{
+  "characters": [
+    {{
+      "name": "角色名",
+      "role": "主角",
+      "personality": "性格描述，支持多行文本。",
+      "background": "背景故事，支持多行文本。",
+      "motivation": "行动动机和目标",
+      "appearance": "外貌特征",
+      "skills": "特长、技能",
+      "relationships": {{
+        "角色2": "关系描述",
+        "角色3": "关系描述"
+      }},
+      "arc": "角色发展弧线",
+      "quirk": "个人怪癖或小特点"
+    }}
+  ]
+}}
 ```
 
 {character_count_guide}

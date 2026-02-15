@@ -13,7 +13,8 @@ from ..prompts.character_prompts import (
     get_character_generation_prompt,
     get_character_refinement_prompt
 )
-from ..utils.yaml_parser import extract_yaml_from_response
+from ..utils.json_parser import extract_json_from_response
+from ..utils.logger import get_logger, WorkflowStep, LogLevel
 
 
 class CharacterAgent(BaseAgent):
@@ -32,6 +33,7 @@ class CharacterAgent(BaseAgent):
             name="Character",
             description="负责创建和完善角色设定，构建角色关系网络"
         )
+        self.logger = get_logger("CharacterAgent")
 
     async def execute(self, **kwargs) -> Dict[str, Any]:
         """
@@ -106,6 +108,12 @@ class CharacterAgent(BaseAgent):
                 story_summary = f"这是一部{genre}类型的小说，主题是{theme}"
 
             # 构建prompt
+            self.logger.log(
+                level=LogLevel.INFO,
+                step=WorkflowStep.CHARACTER_GENERATION,
+                message=f"开始构建prompt: title={story_title}, genre={story_genre}"
+            )
+
             user_prompt = get_character_generation_prompt(
                 title=story_title,
                 genre=story_genre,
@@ -116,17 +124,47 @@ class CharacterAgent(BaseAgent):
                 chapter_count=chapter_count
             )
 
+            self.logger.log(
+                level=LogLevel.INFO,
+                step=WorkflowStep.CHARACTER_GENERATION,
+                message=f"Prompt构建完成, 长度={len(user_prompt)}"
+            )
+
             # 调用LLM
             messages = [
                 SystemMessage(content=CHARACTER_SYSTEM_PROMPT),
                 HumanMessage(content=user_prompt)
             ]
 
-            response = await self.llm.ainvoke(messages)
+            # 使用 JSON Output Mode 确保输出合法的 JSON
+            json_llm = self._get_json_llm()
+
+            self.logger.log(
+                level=LogLevel.INFO,
+                step=WorkflowStep.CHARACTER_GENERATION,
+                message=f"开始调用API, model={getattr(self.llm, 'model_name', 'unknown')}"
+            )
+
+            response = await json_llm.ainvoke(messages)
             content = response.content
 
-            # 解析YAML响应
-            characters_data = extract_yaml_from_response(content, "debug_character_generation")
+            # 记录API输出
+            self.logger.log(
+                level=LogLevel.INFO,
+                step=WorkflowStep.CHARACTER_GENERATION,
+                message=f"API响应: 输出长度={len(content)}, 内容: {content[:500]}"
+            )
+
+            # 解析 JSON 响应
+            try:
+                characters_data = extract_json_from_response(content, "debug_character_generation")
+            except Exception as parse_err:
+                self.logger.log(
+                    level=LogLevel.ERROR,
+                    step=WorkflowStep.CHARACTER_GENERATION,
+                    message=f"JSON解析失败: {parse_err}, 原始内容长度: {len(content)}, 内容前500字: {content[:500]}"
+                )
+                raise
 
             # 如果返回的不是列表，尝试找到列表
             if isinstance(characters_data, dict):
@@ -136,10 +174,34 @@ class CharacterAgent(BaseAgent):
                 else:
                     # 可能只返回了一个角色
                     characters_data = [characters_data]
+            elif isinstance(characters_data, str):
+                # 如果返回的是字符串而不是字典，说明 JSON 不完整
+                self.logger.log(
+                    level=LogLevel.ERROR,
+                    step=WorkflowStep.CHARACTER_GENERATION,
+                    message=f"JSON解析结果为字符串而非字典: {characters_data[:200]}"
+                )
+                raise ValueError(f"JSON输出不完整: {characters_data[:100]}")
 
             # 构建Character对象列表
             characters = []
             for char_data in characters_data:
+                # 确保 relationships 是字典类型
+                if "relationships" in char_data:
+                    rel = char_data["relationships"]
+                    # 如果是字符串（YAML解析问题），尝试转换为字典
+                    if isinstance(rel, str):
+                        # 尝试解析为简单的 key: value 格式
+                        new_rel = {}
+                        for line in rel.strip().split("\n"):
+                            if ":" in line:
+                                key, value = line.split(":", 1)
+                                new_rel[key.strip()] = value.strip()
+                        char_data["relationships"] = new_rel
+                    elif not isinstance(rel, dict):
+                        # 其他类型转为空字典
+                        char_data["relationships"] = {}
+
                 character = Character(**char_data)
                 characters.append(character)
 
@@ -195,8 +257,21 @@ class CharacterAgent(BaseAgent):
             response = await self.llm.ainvoke(messages)
             content = response.content
 
-            # 解析YAML响应
-            character_data = extract_yaml_from_response(content, "debug_character_refinement")
+            # 解析 JSON 响应
+            character_data = extract_json_from_response(content, "debug_character_refinement")
+
+            # 确保 relationships 是字典类型
+            if "relationships" in character_data:
+                rel = character_data["relationships"]
+                if isinstance(rel, str):
+                    new_rel = {}
+                    for line in rel.strip().split("\n"):
+                        if ":" in line:
+                            key, value = line.split(":", 1)
+                            new_rel[key.strip()] = value.strip()
+                    character_data["relationships"] = new_rel
+                elif not isinstance(rel, dict):
+                    character_data["relationships"] = {}
 
             # 构建新的Character对象
             refined_character = Character(**character_data)

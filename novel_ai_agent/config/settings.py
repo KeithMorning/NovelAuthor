@@ -70,7 +70,7 @@ class Settings(BaseSettings):
     default_chapter_words: int = 4000  # 默认章节字数（约5000-6000 tokens输出）
 
     # 代理配置（用于Charles抓包）
-    proxy_enabled: bool = False  # 默认关闭代理
+    proxy_enabled: bool = True  # 开启代理用于抓包
     proxy_url: str = "http://127.0.0.1:8888"  # Charles默认端口
 
     def get_model_name(self) -> str:
