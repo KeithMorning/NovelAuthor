@@ -129,6 +129,7 @@ def create(
 
             # 对话循环
             async def chat_loop():
+                nonlocal novel
                 console.print(f"\n[dim]大纲概览: {novel.outline.summary[:100]}...[/dim]")
                 console.print(f"[dim]角色数: {len(novel.characters)}[/dim]")
                 console.print(f"[dim]章节数: {len(novel.outline.chapters_plan)}[/dim]")
@@ -141,28 +142,24 @@ def create(
 
                 while True:
                     try:
-                        user_input = Prompt.ask("[bold cyan]你[/bold cyan]")
+                        user_input = input("你> ").strip()
 
                         if user_input.lower() in ["quit", "exit", "退出"]:
                             console.print("\n[yellow]退出对话模式[/yellow]")
                             break
 
                         with console.status("[bold green]AI正在思考..."):
-                            result = await dialogue_agent.chat(user_input, context)
+                            chat_result = await dialogue_agent.chat(user_input, context)
 
-                        if result["status"] == "success":
-                            console.print(f"\n[bold green]助手[/bold green]: {result['response']}\n")
+                        if chat_result["status"] == "success":
+                            console.print(f"\n[bold green]助手[/bold green]: {chat_result['response']}\n")
 
                             # 如果有需要执行的操作
-                            if result.get("action"):
-                                action = result["action"]
-                                console.print(f"[yellow]检测到操作请求: {action['type']}[/yellow]")
+                            if chat_result.get("action"):
+                                action = chat_result["action"]
+                                console.print(f"[yellow]检测到操作请求: {action['tool']}[/yellow]")
 
-                                confirm = Prompt.ask(
-                                    "是否执行此操作？",
-                                    choices=["y", "n"],
-                                    default="y"
-                                )
+                                confirm = input("是否执行此操作？(y/n, 默认y): ").strip().lower() or "y"
 
                                 if confirm == "y":
                                     console.print("[cyan]执行操作中...[/cyan]")
@@ -344,6 +341,7 @@ def write(
 
             # 对话循环
             async def chat_loop():
+                nonlocal novel, current_ch
                 console.print(f"\n[dim]当前章节: 第{chapter}章 - {current_ch.title if current_ch else ''}[/dim]")
                 console.print(f"[dim]本章字数: {current_ch.word_count if current_ch else 0}[/dim]")
 
@@ -356,28 +354,24 @@ def write(
 
                 while True:
                     try:
-                        user_input = Prompt.ask("[bold cyan]你[/bold cyan]")
+                        user_input = input("你> ").strip()
 
                         if user_input.lower() in ["quit", "exit", "退出"]:
                             console.print("\n[yellow]退出对话模式[/yellow]")
                             break
 
                         with console.status("[bold green]AI正在思考..."):
-                            result = await dialogue_agent.chat(user_input, context)
+                            chat_result = await dialogue_agent.chat(user_input, context)
 
-                        if result["status"] == "success":
-                            console.print(f"\n[bold green]助手[/bold green]: {result['response']}\n")
+                        if chat_result["status"] == "success":
+                            console.print(f"\n[bold green]助手[/bold green]: {chat_result['response']}\n")
 
                             # 如果有需要执行的操作
-                            if result.get("action"):
-                                action = result["action"]
-                                console.print(f"[yellow]检测到操作请求: {action['type']}[/yellow]")
+                            if chat_result.get("action"):
+                                action = chat_result["action"]
+                                console.print(f"[yellow]检测到操作请求: {action['tool']}[/yellow]")
 
-                                confirm = Prompt.ask(
-                                    "是否执行此操作？",
-                                    choices=["y", "n"],
-                                    default="y"
-                                )
+                                confirm = input("是否执行此操作？(y/n, 默认y): ").strip().lower() or "y"
 
                                 if confirm == "y":
                                     console.print("[cyan]执行操作中...[/cyan]")
@@ -546,6 +540,7 @@ def write_all(
 
             # 对话循环
             async def chat_loop():
+                nonlocal novel
                 console.print(f"\n[dim]小说: {novel.title}[/dim]")
                 console.print(f"[dim]已写章节: {len(novel.chapters) if novel.chapters else 0}[/dim]")
                 console.print(f"[dim]大纲章节: {len(novel.outline.chapters_plan) if novel.outline else 0}[/dim]")
@@ -559,28 +554,24 @@ def write_all(
 
                 while True:
                     try:
-                        user_input = Prompt.ask("[bold cyan]你[/bold cyan]")
+                        user_input = input("你> ").strip()
 
                         if user_input.lower() in ["quit", "exit", "退出"]:
                             console.print("\n[yellow]退出对话模式[/yellow]")
                             break
 
                         with console.status("[bold green]AI正在思考..."):
-                            result = await dialogue_agent.chat(user_input, context)
+                            chat_result = await dialogue_agent.chat(user_input, context)
 
-                        if result["status"] == "success":
-                            console.print(f"\n[bold green]助手[/bold green]: {result['response']}\n")
+                        if chat_result["status"] == "success":
+                            console.print(f"\n[bold green]助手[/bold green]: {chat_result['response']}\n")
 
                             # 如果有需要执行的操作
-                            if result.get("action"):
-                                action = result["action"]
-                                console.print(f"[yellow]检测到操作请求: {action['type']}[/yellow]")
+                            if chat_result.get("action"):
+                                action = chat_result["action"]
+                                console.print(f"[yellow]检测到操作请求: {action['tool']}[/yellow]")
 
-                                confirm = Prompt.ask(
-                                    "是否执行此操作？",
-                                    choices=["y", "n"],
-                                    default="y"
-                                )
+                                confirm = input("是否执行此操作？(y/n, 默认y): ").strip().lower() or "y"
 
                                 if confirm == "y":
                                     console.print("[cyan]执行操作中...[/cyan]")
@@ -1009,11 +1000,11 @@ def review(
 
 
 @app.command()
-def interactive(
+def chat(
     novel_id: str = typer.Option(..., "--id", "-i", help="小说ID"),
     chapter: int = typer.Option(None, "--chapter", "-c", help="章节号（可选）")
 ):
-    """启动交互式创作模式"""
+    """启动交互式创作对话模式（别名: chat）"""
     import asyncio
     from novel_ai_agent.agents.dialogue_agent import DialogueAgent
     from novel_ai_agent.utils.file_manager import file_manager
@@ -1034,7 +1025,8 @@ def interactive(
     # 准备上下文
     context = {
         "novel_title": novel.title,
-        "novel_id": novel_id
+        "novel_id": novel_id,
+        "novel": novel
     }
 
     # 如果指定了章节，加载章节信息
@@ -1057,6 +1049,7 @@ def interactive(
 
     # 对话循环
     async def chat_loop():
+        nonlocal novel
         # 显示当前上下文信息
         if novel.outline:
             console.print(f"\n[dim]大纲概览: {novel.outline.summary[:100]}...[/dim]")
@@ -1074,7 +1067,7 @@ def interactive(
         while True:
             try:
                 # 获取用户输入
-                user_input = Prompt.ask("[bold cyan]你[/bold cyan]")
+                user_input = input("你> ").strip()
 
                 # 检查退出命令
                 if user_input.lower() in ["quit", "exit", "退出"]:
@@ -1083,22 +1076,18 @@ def interactive(
 
                 # 处理对话
                 with console.status("[bold green]AI正在思考..."):
-                    result = await dialogue_agent.chat(user_input, context)
+                    chat_result = await dialogue_agent.chat(user_input, context)
 
-                if result["status"] == "success":
+                if chat_result["status"] == "success":
                     # 显示AI回复
-                    console.print(f"\n[bold green]助手[/bold green]: {result['response']}\n")
+                    console.print(f"\n[bold green]助手[/bold green]: {chat_result['response']}\n")
 
                     # 如果有需要执行的操作
-                    if result.get("action"):
-                        action = result["action"]
-                        console.print(f"[yellow]检测到操作请求: {action['type']}[/yellow]")
+                    if chat_result.get("action"):
+                        action = chat_result["action"]
+                        console.print(f"[yellow]检测到操作请求: {action['tool']}[/yellow]")
 
-                        confirm = Prompt.ask(
-                            "是否执行此操作？",
-                            choices=["y", "n"],
-                            default="y"
-                        )
+                        confirm = input("是否执行此操作？(y/n, 默认y): ").strip().lower() or "y"
 
                         if confirm == "y":
                             console.print("[cyan]执行操作中...[/cyan]")
@@ -1107,29 +1096,29 @@ def interactive(
                                 # 执行大纲细化
                                 from novel_ai_agent.agents.coordinator import CoordinatorAgent
                                 coordinator = CoordinatorAgent()
-                                result = await coordinator.edit_outline_workflow(
+                                exec_result = await coordinator.edit_outline_workflow(
                                     novel_id=novel_id,
                                     feedback=action.get("feedback", ""),
                                     chapter_number=action.get("chapter_number")
                                 )
-                                if result["status"] == "success":
-                                    console.print(f"[green]✓ {result['message']}[/green]")
+                                if exec_result["status"] == "success":
+                                    console.print(f"[green]✓ {exec_result['message']}[/green]")
                                 else:
-                                    console.print(f"[red]✗ {result['message']}[/red]")
+                                    console.print(f"[red]✗ {exec_result['message']}[/red]")
 
                             elif action["type"] == "refine_character":
                                 # 执行角色修改
                                 from novel_ai_agent.agents.coordinator import CoordinatorAgent
                                 coordinator = CoordinatorAgent()
-                                result = await coordinator.edit_character_workflow(
+                                exec_result = await coordinator.edit_character_workflow(
                                     novel_id=novel_id,
                                     character_name=action.get("character_name", ""),
                                     feedback=action.get("feedback", "")
                                 )
-                                if result["status"] == "success":
-                                    console.print(f"[green]✓ {result['message']}[/green]")
+                                if exec_result["status"] == "success":
+                                    console.print(f"[green]✓ {exec_result['message']}[/green]")
                                 else:
-                                    console.print(f"[red]✗ {result['message']}[/red]")
+                                    console.print(f"[red]✗ {exec_result['message']}[/red]")
 
                             elif action["type"] == "expand_chapter":
                                 # 执行章节细化
@@ -1138,23 +1127,23 @@ def interactive(
                                 chapter_num = action.get("chapter_number")
                                 cp = novel.get_chapter_plan(chapter_num)
                                 if cp:
-                                    result = await outline_agent.expand_chapter_plan(
+                                    exec_result = await outline_agent.expand_chapter_plan(
                                         outline=novel.outline,
                                         chapter_number=chapter_num,
                                         story_context=context.get("story_context", {})
                                     )
-                                    if result["status"] == "success":
-                                        cp.detailed_plan = result["detailed_plan"]
+                                    if exec_result["status"] == "success":
+                                        cp.detailed_plan = exec_result["detailed_plan"]
                                         file_manager.save_novel_json(novel)
                                         console.print(f"[green]✓ 第{chapter_num}章细化完成[/green]")
                                     else:
-                                        console.print(f"[red]✗ {result['message']}[/red]")
+                                        console.print(f"[red]✗ {exec_result['message']}[/red]")
 
                             # 重新加载小说以获取最新数据
                             novel = file_manager.load_novel_json(novel_id)
 
                 else:
-                    console.print(f"[red]错误:[/red] {result.get('message', '未知错误')}")
+                    console.print(f"[red]错误:[/red] {chat_result.get('message', '未知错误')}")
 
             except KeyboardInterrupt:
                 console.print("\n[yellow]退出对话模式[/yellow]")

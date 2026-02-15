@@ -2,7 +2,7 @@
 对话Agent
 负责与用户进行多轮对话，理解修改意图并执行修改
 """
-import re
+import json
 from typing import Dict, Any, List, Optional
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from .base_agent import BaseAgent
@@ -14,40 +14,7 @@ from ..models.novel import Novel
 from ..models.chapter import Chapter
 from ..memory import get_memory_manager
 from ..utils.file_manager import file_manager
-
-
-DIALOGUE_SYSTEM_PROMPT = """你是一位专业的小说编辑助手，负责与作者进行对话，理解他们的修改需求。
-
-你的职责：
-1. 理解用户的修改意图和需求
-2. 询问必要的细节和澄清
-3. 提供建设性的建议
-4. 确认修改方案
-5. 执行修改操作
-
-对话风格：
-- 友好、专业、耐心
-- 主动提问，帮助用户明确需求
-- 提供具体的修改建议
-- 在执行修改前确认方案
-
-【重要：你必须识别以下修改意图并返回对应的action】
-
-修改意图识别规则：
-1. 如果用户说"细化第X章"、"扩展第X章"、"详细规划第X章" → action: expand_chapter（章节细化）
-2. 如果用户说"修改大纲"、"调整大纲"、"优化大纲" → action: refine_outline（大纲细化）
-3. 如果用户说"修改角色"、"调整角色"、"添加角色" → action: refine_character（角色调整）
-4. 如果用户说"修改本章"、"重写本章"、"调整本章" → action: revise_chapter（章节修改）
-5. 如果用户说"润色本章"、"优化本章" → action: polish_chapter（章节润色）
-
-你可以处理的修改类型：
-- 情节修改：调整故事走向、增删情节
-- 角色修改：调整角色行为、对话、添加新角色
-- 文字润色：改进表达、风格调整
-- 逻辑优化：修复漏洞、增强合理性
-- 大纲细化：调整情节点、章节规划
-- 章节细化：扩展章节规划、增加场景细节
-"""
+from ..prompts.dialogue_prompts import get_dialogue_system_prompt
 
 
 class DialogueAgent(BaseAgent):
@@ -115,14 +82,13 @@ class DialogueAgent(BaseAgent):
             # 构建上下文信息
             context_str = self._build_context_string(context)
 
+            # 使用新的prompt模板
+            system_prompt = get_dialogue_system_prompt(context_str)
+
             # 构建消息列表
-            messages = [SystemMessage(content=DIALOGUE_SYSTEM_PROMPT)]
+            messages = [SystemMessage(content=system_prompt)]
 
-            # 添加上下文
-            if context_str:
-                messages.append(HumanMessage(content=f"上下文信息：\n{context_str}"))
-
-            # 添加对话历史（最近5轮）
+            # 添加对话历史（最近10轮）
             recent_history = self.conversation_history[-10:]
             for msg in recent_history:
                 if msg["role"] == "user":
@@ -130,9 +96,20 @@ class DialogueAgent(BaseAgent):
                 else:
                     messages.append(AIMessage(content=msg["content"]))
 
-            # 调用LLM
-            response = await self.llm.ainvoke(messages)
-            ai_response = response.content
+            # 使用JSON模式调用LLM
+            json_llm = self._get_json_llm()
+            response = await json_llm.ainvoke(messages)
+            response_content = response.content
+
+            # 解析JSON响应
+            try:
+                parsed = json.loads(response_content)
+                ai_response = parsed.get("response", response_content)
+                action = parsed.get("action")
+            except json.JSONDecodeError:
+                # JSON解析失败，回退到原始响应
+                ai_response = response_content
+                action = None
 
             # 添加AI回复到历史
             self.conversation_history.append({
@@ -142,9 +119,6 @@ class DialogueAgent(BaseAgent):
 
             # 添加到记忆系统
             self.memory_manager.add_conversation_turn("assistant", ai_response)
-
-            # 分析是否包含执行指令
-            action = await self._analyze_action(user_input, ai_response, context)
 
             return {
                 "status": "success",
@@ -160,71 +134,6 @@ class DialogueAgent(BaseAgent):
                 "error": str(e)
             }
 
-    async def _analyze_action(
-        self,
-        user_input: str,
-        ai_response: str,
-        context: Optional[Dict]
-    ) -> Optional[Dict]:
-        """
-        分析对话中是否包含需要执行的操作
-
-        Args:
-            user_input: 用户输入
-            ai_response: AI回复
-            context: 上下文
-
-        Returns:
-            Optional[Dict]: 操作信息，如果没有则返回None
-        """
-        user_input_lower = user_input.lower()
-
-        # 章节细化：细化第X章、扩展第X章、详细规划第X章
-        expand_match = re.search(r'第(\d+)章', user_input)
-        if any(kw in user_input for kw in ['细化', '扩展', '详细规划', '展开']):
-            if expand_match:
-                chapter_num = int(expand_match.group(1))
-                return {
-                    "type": "expand_chapter",
-                    "target": {"chapter_number": chapter_num},
-                    "user_request": user_input
-                }
-
-        # 大纲细化
-        if any(kw in user_input for kw in ['修改大纲', '调整大纲', '优化大纲', '完善大纲', '改大纲']):
-            return {
-                "type": "refine_outline",
-                "target": None,
-                "user_request": user_input
-            }
-
-        # 角色调整
-        if any(kw in user_input for kw in ['修改角色', '调整角色', '添加角色', '完善角色', '改角色']):
-            return {
-                "type": "refine_character",
-                "target": None,
-                "user_request": user_input
-            }
-
-        # 章节修改
-        if expand_match and any(kw in user_input for kw in ['修改', '重写', '调整', '改写']):
-            chapter_num = int(expand_match.group(1))
-            return {
-                "type": "revise_chapter",
-                "target": {"chapter_number": chapter_num},
-                "user_request": user_input
-            }
-
-        # 章节润色
-        if expand_match and any(kw in user_input for kw in ['润色', '优化', '美化']):
-            chapter_num = int(expand_match.group(1))
-            return {
-                "type": "polish_chapter",
-                "target": {"chapter_number": chapter_num},
-                "user_request": user_input
-            }
-
-        return None
 
     def _build_context_string(self, context: Optional[Dict]) -> str:
         """构建上下文字符串"""
@@ -236,9 +145,37 @@ class DialogueAgent(BaseAgent):
         if "novel_title" in context:
             lines.append(f"小说：{context['novel_title']}")
 
+        # 添加大纲信息
+        novel = context.get("novel")
+        if novel:
+            if novel.outline:
+                lines.append(f"类型：{novel.genre}")
+                lines.append(f"主题：{novel.outline.theme}")
+                lines.append(f"摘要：{novel.outline.summary}")
+                if novel.outline.chapters_plan:
+                    lines.append(f"章节数：{len(novel.outline.chapters_plan)}")
+
+            # 添加完整角色信息
+            if novel.characters:
+                lines.append(f"\n当前角色列表（共{len(novel.characters)}个）：")
+                for char in novel.characters:
+                    lines.append(f"\n【{char.name}】（{char.role}）")
+                    lines.append(f"  性格：{char.personality}")
+                    if char.background:
+                        lines.append(f"  背景：{char.background}")
+                    if char.motivation:
+                        lines.append(f"  动机：{char.motivation}")
+                    if char.arc:
+                        lines.append(f"  发展弧线：{char.arc}")
+                    if char.quirk:
+                        lines.append(f"  个人特点：{char.quirk}")
+                    if char.relationships:
+                        rel_str = "、".join(f"{k}:{v}" for k, v in char.relationships.items())
+                        lines.append(f"  关系：{rel_str}")
+
         if "current_chapter" in context:
             ch = context["current_chapter"]
-            lines.append(f"当前章节：第{ch.get('number', '?')}章 - {ch.get('title', '')}")
+            lines.append(f"\n当前章节：第{ch.get('number', '?')}章 - {ch.get('title', '')}")
             if "summary" in ch:
                 lines.append(f"摘要：{ch['summary']}")
 
@@ -331,13 +268,19 @@ class DialogueAgent(BaseAgent):
         执行识别出的动作
 
         Args:
-            action: 动作信息
+            action: 动作信息，格式：{
+                "tool": "工具名",
+                "params": {...},
+                "reason": "调用原因"
+            }
             context: 执行上下文
 
         Returns:
             Dict: 执行结果
         """
-        action_type = action.get("type")
+        tool_name = action.get("tool")
+        params = action.get("params", {})
+        reason = action.get("reason", "")
         novel_id = context.get("novel_id")
 
         if not novel_id:
@@ -348,9 +291,9 @@ class DialogueAgent(BaseAgent):
         if not novel:
             return {"status": "error", "message": f"未找到小说 {novel_id}"}
 
-        if action_type == "expand_chapter":
+        if tool_name == "expand_chapter":
             # 章节细化
-            chapter_num = action.get("target", {}).get("chapter_number")
+            chapter_num = params.get("chapter_number")
             if not chapter_num:
                 return {"status": "error", "message": "未指定章节号"}
 
@@ -369,7 +312,7 @@ class DialogueAgent(BaseAgent):
             result = await outline_agent.expand_chapter_plan(
                 outline=novel.outline,
                 chapter_number=chapter_num,
-                story_context={"context": action.get("user_request", "")}
+                story_context={"context": reason}
             )
 
             if result.get("status") == "success":
@@ -379,12 +322,12 @@ class DialogueAgent(BaseAgent):
 
             return result
 
-        elif action_type == "refine_outline":
+        elif tool_name == "modify_outline":
             # 大纲细化
             outline_agent = OutlineAgent()
             result = await outline_agent.refine_outline(
                 current_outline=novel.outline,
-                user_feedback=action.get("user_request", "")
+                user_feedback=params.get("feedback", reason)
             )
 
             if result.get("status") == "success":
@@ -394,29 +337,75 @@ class DialogueAgent(BaseAgent):
 
             return result
 
-        elif action_type == "refine_character":
-            # 角色调整 - 重新生成角色
+        elif tool_name == "modify_character":
+            # 角色调整 - 找到具体角色，调用refine_character修改
             character_agent = CharacterAgent()
-            result = await character_agent.generate_characters(
-                outline=novel.outline,
-                user_requirements=action.get("user_request", ""),
-                chapter_count=len(novel.outline.chapters_plan) if novel.outline else 20,
-                title=novel.title,
-                genre=novel.genre,
-                theme=novel.outline.theme if novel.outline else ""
-            )
+            target_name = params.get("character_name")
+            modifications = params.get("modifications", reason)
 
-            if result.get("status") == "success":
-                # 保存更新后的角色
-                if result.get("characters"):
-                    novel.characters = result.get("characters")
-                file_manager.save_novel_json(novel)
+            # 找到目标角色
+            target_char = None
+            if target_name and novel.characters:
+                for c in novel.characters:
+                    if c.name == target_name:
+                        target_char = c
+                        break
+
+            if target_char:
+                # 修改单个角色
+                story_context = f"小说：{novel.title}，类型：{novel.genre}"
+                if novel.outline:
+                    story_context += f"，主题：{novel.outline.theme}"
+
+                result = await character_agent.refine_character(
+                    character=target_char,
+                    refinement_requirements=modifications,
+                    story_context=story_context
+                )
+
+                if result.get("status") == "success" and result.get("character"):
+                    # 替换对应角色
+                    refined_char = result["character"]
+                    novel.characters = [
+                        refined_char if c.name == target_name else c
+                        for c in novel.characters
+                    ]
+                    file_manager.save_novel_json(novel)
+                    file_manager.save_characters_markdown(novel.characters, novel_id)
+                    result["message"] = f"角色 {target_name} 已修改并保存"
+            else:
+                # 没有找到具体角色，把用户需求和当前角色信息一起传给角色Agent重新生成
+                current_chars_desc = ""
+                if novel.characters:
+                    char_lines = []
+                    for c in novel.characters:
+                        char_lines.append(f"- {c.name}（{c.role}）: 性格={c.personality}, 背景={c.background}")
+                    current_chars_desc = "\n".join(char_lines)
+
+                combined_requirements = (
+                    f"用户修改要求：{modifications}\n\n"
+                    f"当前角色列表（请在此基础上修改，保持未涉及角色不变）：\n{current_chars_desc}"
+                )
+
+                result = await character_agent.generate_characters(
+                    outline=novel.outline,
+                    character_requirements=combined_requirements,
+                    chapter_count=len(novel.outline.chapters_plan) if novel.outline else 20,
+                    title=novel.title,
+                    genre=novel.genre,
+                    theme=novel.outline.theme if novel.outline else ""
+                )
+
+                if result.get("status") == "success" and result.get("characters"):
+                    novel.characters = result["characters"]
+                    file_manager.save_novel_json(novel)
+                    file_manager.save_characters_markdown(novel.characters, novel_id)
 
             return result
 
-        elif action_type == "revise_chapter":
+        elif tool_name == "revise_chapter":
             # 章节修改
-            chapter_num = action.get("target", {}).get("chapter_number")
+            chapter_num = params.get("chapter_number")
             if not chapter_num:
                 return {"status": "error", "message": "未指定章节号"}
 
@@ -433,7 +422,7 @@ class DialogueAgent(BaseAgent):
             writer = WriterAgent(style_name=novel.author_style)
             result = await writer.revise_chapter(
                 chapter=chapter,
-                revision_requirements=action.get("user_request", ""),
+                revision_requirements=params.get("requirements", reason),
                 context=""
             )
 
@@ -445,9 +434,9 @@ class DialogueAgent(BaseAgent):
 
             return result
 
-        elif action_type == "polish_chapter":
+        elif tool_name == "polish_chapter":
             # 章节润色
-            chapter_num = action.get("target", {}).get("chapter_number")
+            chapter_num = params.get("chapter_number")
             if not chapter_num:
                 return {"status": "error", "message": "未指定章节号"}
 
@@ -476,4 +465,4 @@ class DialogueAgent(BaseAgent):
 
             return result
 
-        return {"status": "error", "message": f"未知动作类型: {action_type}"}
+        return {"status": "error", "message": f"未知工具: {tool_name}"}

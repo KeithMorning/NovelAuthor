@@ -254,7 +254,10 @@ class CharacterAgent(BaseAgent):
                 HumanMessage(content=user_prompt)
             ]
 
-            response = await self.llm.ainvoke(messages)
+            # 使用 JSON Output Mode 确保输出合法的 JSON
+            json_llm = self._get_json_llm()
+
+            response = await json_llm.ainvoke(messages)
             content = response.content
 
             # 解析 JSON 响应
