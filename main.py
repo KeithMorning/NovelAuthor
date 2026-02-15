@@ -809,6 +809,20 @@ def interactive(
 
     # 对话循环
     async def chat_loop():
+        # 显示当前上下文信息
+        if novel.outline:
+            console.print(f"\n[dim]大纲概览: {novel.outline.summary[:100]}...[/dim]")
+        if novel.characters:
+            console.print(f"[dim]角色数: {len(novel.characters)}[/dim]")
+        if novel.outline and novel.outline.chapters_plan:
+            console.print(f"[dim]章节数: {len(novel.outline.chapters_plan)}[/dim]")
+
+        console.print("\n[bold cyan]你可以:[/bold cyan]")
+        console.print("  - 询问当前大纲或章节的情况")
+        console.print("  - 提出修改意见（如：'把反派改得更聪明一点'）")
+        console.print("  - 让AI细化某章节（如：'细化第3章'）")
+        console.print("  - 输入 'quit' 或 'exit' 退出\n")
+
         while True:
             try:
                 # 获取用户输入
@@ -840,8 +854,56 @@ def interactive(
 
                         if confirm == "y":
                             console.print("[cyan]执行操作中...[/cyan]")
-                            # 这里可以调用相应的Agent执行操作
-                            console.print("[green]操作完成[/green]")
+                            # 根据操作类型执行
+                            if action["type"] == "refine_outline":
+                                # 执行大纲细化
+                                from novel_ai_agent.agents.coordinator import CoordinatorAgent
+                                coordinator = CoordinatorAgent()
+                                result = await coordinator.edit_outline_workflow(
+                                    novel_id=novel_id,
+                                    feedback=action.get("feedback", ""),
+                                    chapter_number=action.get("chapter_number")
+                                )
+                                if result["status"] == "success":
+                                    console.print(f"[green]✓ {result['message']}[/green]")
+                                else:
+                                    console.print(f"[red]✗ {result['message']}[/red]")
+
+                            elif action["type"] == "refine_character":
+                                # 执行角色修改
+                                from novel_ai_agent.agents.coordinator import CoordinatorAgent
+                                coordinator = CoordinatorAgent()
+                                result = await coordinator.edit_character_workflow(
+                                    novel_id=novel_id,
+                                    character_name=action.get("character_name", ""),
+                                    feedback=action.get("feedback", "")
+                                )
+                                if result["status"] == "success":
+                                    console.print(f"[green]✓ {result['message']}[/green]")
+                                else:
+                                    console.print(f"[red]✗ {result['message']}[/red]")
+
+                            elif action["type"] == "expand_chapter":
+                                # 执行章节细化
+                                from novel_ai_agent.agents.outline_agent import OutlineAgent
+                                outline_agent = OutlineAgent()
+                                chapter_num = action.get("chapter_number")
+                                cp = novel.get_chapter_plan(chapter_num)
+                                if cp:
+                                    result = await outline_agent.expand_chapter_plan(
+                                        outline=novel.outline,
+                                        chapter_number=chapter_num,
+                                        story_context=context.get("story_context", {})
+                                    )
+                                    if result["status"] == "success":
+                                        cp.detailed_plan = result["detailed_plan"]
+                                        file_manager.save_novel_json(novel)
+                                        console.print(f"[green]✓ 第{chapter_num}章细化完成[/green]")
+                                    else:
+                                        console.print(f"[red]✗ {result['message']}[/red]")
+
+                            # 重新加载小说以获取最新数据
+                            novel = file_manager.load_novel_json(novel_id)
 
                 else:
                     console.print(f"[red]错误:[/red] {result.get('message', '未知错误')}")
@@ -980,6 +1042,80 @@ def edit_character(
         console.print(f"\n[red]✗[/red] {result['message']}")
         if "error" in result:
             console.print(f"[red]错误详情: {result['error']}[red]")
+
+
+@app.command()
+def expand_chapters(
+    novel_id: str = typer.Option(..., "--id", "-i", help="小说ID"),
+    chapter: int = typer.Option(None, "--chapter", "-c", help="可选：指定细化某一章，不指定则细化所有章节")
+):
+    """细化章节规划（补全地点、时间等信息）"""
+    import asyncio
+    from novel_ai_agent.agents.outline_agent import OutlineAgent
+    from novel_ai_agent.utils.file_manager import file_manager
+
+    console.print(Panel(f"[bold cyan]细化章节规划[/bold cyan]"))
+    console.print(f"小说ID: [yellow]{novel_id}[/yellow]")
+
+    # 加载小说
+    novel = file_manager.load_novel_json(novel_id)
+    if not novel:
+        console.print(f"[red]错误:[/red] 未找到小说 {novel_id}")
+        return
+
+    if not novel.outline or not novel.outline.chapters_plan:
+        console.print(f"[red]错误:[/red] 小说没有大纲")
+        return
+
+    # 确定要细化的章节
+    if chapter:
+        chapters_to_expand = [cp for cp in novel.outline.chapters_plan if cp.chapter_number == chapter]
+        if not chapters_to_expand:
+            console.print(f"[red]错误:[/red] 未找到第{chapter}章")
+            return
+    else:
+        chapters_to_expand = novel.outline.chapters_plan
+
+    console.print(f"待细化章节: {[cp.chapter_number for cp in chapters_to_expand]}\n")
+
+    # 创建OutlineAgent
+    outline_agent = OutlineAgent()
+
+    # 构建故事上下文
+    story_context = {
+        "world_state": {},
+        "recent_history": []
+    }
+
+    # 执行细化
+    async def expand_all():
+        for cp in chapters_to_expand:
+            with console.status(f"[bold green]正在细化第{cp.chapter_number}章..."):
+                result = await outline_agent.expand_chapter_plan(
+                    outline=novel.outline,
+                    chapter_number=cp.chapter_number,
+                    story_context=story_context
+                )
+                if result["status"] == "success":
+                    cp.detailed_plan = result["detailed_plan"]
+                    console.print(f"  [green]✓[/green] 第{cp.chapter_number}章细化完成")
+                    # 打印新增的地点和时间信息
+                    if cp.detailed_plan:
+                        loc = getattr(cp.detailed_plan, 'location', '')
+                        tp = getattr(cp.detailed_plan, 'time_point', '')
+                        td = getattr(cp.detailed_plan, 'time_duration', '')
+                        if loc or tp or td:
+                            console.print(f"      地点: {loc}, 时间: {tp}, 跨度: {td}")
+                else:
+                    console.print(f"  [red]✗[/red] 第{cp.chapter_number}章细化失败: {result.get('message')}")
+
+    asyncio.run(expand_all())
+
+    # 保存
+    file_manager.save_novel_json(novel)
+    file_manager.save_outline_markdown(novel.outline, novel_id)
+
+    console.print(f"\n[green]✓[/green] 细化完成，已保存")
 
 
 @app.command()

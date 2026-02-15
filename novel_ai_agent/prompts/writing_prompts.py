@@ -101,10 +101,13 @@ CHAPTER_WRITING_PROMPT = """请创作以下章节：
 
 【一致性硬约束】（违反判定为不合格）:
 1. **角色状态约束**: 仔细阅读【前文回顾】中的【角色当前状态】。标记为"已死亡/消失/离队"的角色，绝对不能出现在当前场景中，不能被提及，不能以任何形式出现。
-2. **时间逻辑约束**: 不能出现时间倒流，不能跳过未描写的时间段。
-3. **空间逻辑约束**: 角色位置变化必须符合前文描述，不能瞬间移动。
+2. **时间逻辑约束**: 不能出现时间倒流，不能跳过未描写的时间段。本章发生在【{time_point}】，时间跨度【{time_duration}】，必须严格遵守！
+3. **空间逻辑约束**: 角色位置变化必须符合前文描述，不能瞬间移动。本章主要地点【{location}】，场景转换必须有合理过渡。
 4. **伏笔约束**: 必须继承前文的伏笔线索，不能出现毫无铺垫的新设定。
 5. **章节衔接**: 必须自然承接上一章结尾的内容和情感基调。
+6. **时长一致性**: 如果涉及角色生命倒计时、技能冷却等有时间限制的设定，必须与前文保持一致！
+7. **角色关系约束**: 本章涉及的角色必须与前文关系一致！不能出现两个陌生人忽然在一起的情况，角色之间的互动必须有前因后果，关系演进需要循序渐进。
+8. **反派描写约束**: 如果本章有反派角色出场，必须体现反派的威胁感和计谋！反派不是笨蛋，不是无能之辈。反派应该展现出自己的智慧、能力和野心，与主角形成对等的冲突。反派行为要有逻辑，不是为了使坏而使坏。
 
 请直接输出章节正文内容，不需要其他说明。内容使用Markdown格式，可以适当使用加粗、斜体等格式。
 """
@@ -181,7 +184,10 @@ def get_chapter_writing_prompt(
     characters_info: str,
     previous_content: str,
     key_events: list,
-    style: str
+    style: str,
+    location: str = "",
+    time_point: str = "",
+    time_duration: str = ""
 ) -> str:
     """
     获取章节写作prompt
@@ -196,11 +202,19 @@ def get_chapter_writing_prompt(
         previous_content: 前文内容摘要
         key_events: 关键事件列表
         style: 写作风格
+        location: 本章主要地点
+        time_point: 本章时间点
+        time_duration: 本章时间跨度
 
     Returns:
         str: 格式化的prompt
     """
     key_events_str = "\n".join([f"- {event}" for event in key_events])
+
+    # 默认值
+    location = location or "无特定地点"
+    time_point = time_point or "无特定时间"
+    time_duration = time_duration or "无特定跨度"
 
     return CHAPTER_WRITING_PROMPT.format(
         chapter_number=chapter_number,
@@ -211,7 +225,10 @@ def get_chapter_writing_prompt(
         characters_info=characters_info,
         previous_content=previous_content or "这是第一章，无前文",
         key_events=key_events_str,
-        style=style
+        style=style,
+        location=location,
+        time_point=time_point,
+        time_duration=time_duration
     )
 
 def get_chapter_revision_prompt(

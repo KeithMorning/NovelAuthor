@@ -30,6 +30,11 @@ class DetailedChapterPlan(BaseModel):
     key_dialogues: List[str] = Field(default_factory=list, description="关键对话或动作点")
     transitions: Dict[str, str] = Field(default_factory=dict, description="与前后章的衔接点")
 
+    # 新增：地点和时间追踪
+    location: str = Field("", description="本章主要发生的地点")
+    time_point: str = Field("", description="本章发生的时间点（如：故事开始后第X天）")
+    time_duration: str = Field("", description="本章时间跨度（如：2小时、3天）")
+
 
 class ChapterPlan(BaseModel):
     """章节规划模型"""

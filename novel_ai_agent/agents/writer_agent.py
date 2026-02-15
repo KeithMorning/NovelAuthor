@@ -118,6 +118,15 @@ class WriterAgent(BaseAgent):
             from ..config.settings import Settings
             target_words = Settings().default_chapter_words
 
+            # 获取地点和时间信息
+            location = ""
+            time_point = ""
+            time_duration = ""
+            if chapter_plan.detailed_plan:
+                location = getattr(chapter_plan.detailed_plan, 'location', '') or ""
+                time_point = getattr(chapter_plan.detailed_plan, 'time_point', '') or ""
+                time_duration = getattr(chapter_plan.detailed_plan, 'time_duration', '') or ""
+
             # 构建用户prompt
             user_prompt = get_chapter_writing_prompt(
                 chapter_number=chapter_plan.chapter_number,
@@ -128,7 +137,10 @@ class WriterAgent(BaseAgent):
                 characters_info=characters_info,
                 previous_content=previous_content,
                 key_events=key_events,
-                style=self.style_name
+                style=self.style_name,
+                location=location,
+                time_point=time_point,
+                time_duration=time_duration
             )
 
             # 调用LLM - 强制设置更高的 max_tokens
