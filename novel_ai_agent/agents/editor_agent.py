@@ -100,8 +100,7 @@ class EditorAgent(BaseAgent):
                 HumanMessage(content=user_prompt)
             ]
 
-            response = await self.llm.ainvoke(messages)
-            polished_content = response.content
+            polished_content = await self._stream_invoke(self.llm, messages)
 
             # 创建新版本的章节（使用 model_copy 保留伏笔等结构化数据）
             polished_chapter = chapter.model_copy(update={
@@ -169,8 +168,7 @@ class EditorAgent(BaseAgent):
                 HumanMessage(content=user_prompt)
             ]
 
-            response = await json_llm.ainvoke(messages)
-            content = response.content
+            content = await self._stream_invoke(json_llm, messages)
 
             # 解析JSON响应
             result = extract_json_from_response(content, "debug_editor")
@@ -227,8 +225,7 @@ class EditorAgent(BaseAgent):
                 HumanMessage(content=user_prompt)
             ]
 
-            response = await json_llm.ainvoke(messages)
-            content = response.content
+            content = await self._stream_invoke(json_llm, messages)
 
             # 解析JSON响应
             result = extract_json_from_response(content, "debug_editor")
@@ -298,8 +295,7 @@ class EditorAgent(BaseAgent):
                 HumanMessage(content=user_prompt)
             ]
 
-            response = await json_llm.ainvoke(messages)
-            content = response.content
+            content = await self._stream_invoke(json_llm, messages)
 
             # 解析JSON响应
             result = extract_json_from_response(content, "debug_editor")
@@ -349,8 +345,7 @@ class EditorAgent(BaseAgent):
                 HumanMessage(content=user_prompt)
             ]
 
-            response = await self.llm.ainvoke(messages)
-            revised_content = response.content
+            revised_content = await self._stream_invoke(self.llm, messages)
 
             # 创建新版本的章节（使用 model_copy 保留伏笔等结构化数据）
             revised_chapter = chapter.model_copy(update={

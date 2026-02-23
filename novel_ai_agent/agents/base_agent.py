@@ -4,11 +4,13 @@ Agent基础类
 支持多个LLM提供商
 """
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Optional, Callable, List
 import httpx
 from langchain_anthropic import ChatAnthropic
 from langchain_openai import ChatOpenAI, AzureChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import BaseMessage
 from ..config.settings import get_settings
 
 
@@ -108,35 +110,44 @@ class BaseAgent(ABC):
                 **common_kwargs,
             )
 
-        else:
-            raise ValueError(
-                f"不支持的LLM提供商: {provider}. "
-                f"支持的提供商: anthropic, openai, deepseek, azure"
+        if provider == "gemini":
+            return ChatGoogleGenerativeAI(
+                model=model_name,
+                temperature=temperature,
+                max_output_tokens=max_tokens,
+                google_api_key=self.settings.gemini_api_key,
             )
+
+        raise ValueError(
+            f"不支持的LLM提供商: {provider}. "
+            f"支持的提供商: anthropic, openai, deepseek, azure, gemini"
+        )
 
     @property
     def _supports_json_mode(self) -> bool:
         """检查当前 LLM provider 是否支持 JSON Output Mode"""
-        return self.settings.llm_provider.lower() in ("deepseek", "openai", "azure")
+        # Gemini 通过 response_mime_type 支持 JSON 输出
+        # OpenAI/DeepSeek/Azure 通过 response_format 支持
+        return self.settings.llm_provider.lower() in ("deepseek", "openai", "azure", "gemini")
 
     def _get_json_llm(self) -> BaseChatModel:
         """
-        获取启用了 JSON Output Mode 的 LLM 实例
+        获取启用了 JSON Output Mode 的 LLM 实例。
 
-        对于支持 response_format 的 provider（DeepSeek、OpenAI、Azure），
-        使用 .bind() 绑定 response_format={"type": "json_object"}。
-        对于不支持的 provider（如 Anthropic），返回普通 LLM（由 prompt + json_parser 兜底）。
-
-        注意：使用 JSON Mode 时，prompt 中必须包含 "json" 字样和格式示例。
-
-        Returns:
-            BaseChatModel: JSON 模式的 LLM 实例
+        - OpenAI/DeepSeek/Azure: 使用 response_format={"type": "json_object"}
+        - Gemini: 使用 response_mime_type="application/json"
+        - Anthropic: 不支持，回退到普通 LLM（由 prompt + json_parser 兼底）
         """
-        if self._supports_json_mode:
+        provider = self.settings.llm_provider.lower()
+        if provider in ("openai", "deepseek", "azure"):
             return self.llm.bind(
                 response_format={"type": "json_object"}
             )
-        # Anthropic 不支持 response_format，回退到普通 LLM
+        if provider == "gemini":
+            return self.llm.bind(
+                response_mime_type="application/json"
+            )
+        # Anthropic 不支持 response_format
         return self.llm
 
     @abstractmethod
@@ -151,6 +162,32 @@ class BaseAgent(ABC):
             执行结果
         """
         pass
+
+    async def _stream_invoke(
+        self,
+        llm: BaseChatModel,
+        messages: List[BaseMessage],
+        on_token: Optional[Callable[[str], None]] = None
+    ) -> str:
+        """
+        流式调用 LLM，实时拼接 chunk 并通过回调通知。
+
+        Args:
+            llm: 要调用的 LLM 实例（可以是 self.llm 或 self._get_json_llm()）
+            messages: 消息列表
+            on_token: 可选回调，每次收到新 chunk 时调用，参数为 chunk 文本
+
+        Returns:
+            str: 完整的响应内容
+        """
+        full_chunks: list[str] = []
+        async for chunk in llm.astream(messages):
+            chunk_text = chunk.content if hasattr(chunk, "content") else str(chunk)
+            if chunk_text:
+                full_chunks.append(chunk_text)
+                if on_token:
+                    on_token(chunk_text)
+        return "".join(full_chunks)
 
     def execute_sync(self, **kwargs):
         """

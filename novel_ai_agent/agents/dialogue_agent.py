@@ -2,6 +2,7 @@
 对话Agent
 负责与用户进行多轮对话，理解修改意图并执行修改
 """
+import re
 import json
 from typing import Dict, Any, List, Optional
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
@@ -98,8 +99,7 @@ class DialogueAgent(BaseAgent):
 
             # 使用JSON模式调用LLM
             json_llm = self._get_json_llm()
-            response = await json_llm.ainvoke(messages)
-            response_content = response.content
+            response_content = await self._stream_invoke(json_llm, messages)
 
             # 解析JSON响应
             try:
@@ -259,6 +259,79 @@ class DialogueAgent(BaseAgent):
         """获取完整对话历史"""
         return self.conversation_history.copy()
 
+    def fast_route(self, user_input: str) -> Optional[Dict[str, Any]]:
+        """
+        基于规则的快速意图路由，零 LLM 调用。
+
+        命中常见指令模式时直接返回 action dict；
+        无法识别时返回 None，由调用方降级到 LLM 解析。
+
+        支持的模式:
+          - 细化/展开/扩展 第N章
+          - 润色 第N章
+          - 修改/重写/改写 第N章 [具体要求]
+          - 修改/调整/改/更新 大纲 [具体要求]
+          - 修改/改 角色 [角色名] [具体要求]
+        """
+        text = user_input.strip()
+
+        # ── 细化章节 ──────────────────────────────────────────
+        m = re.search(r'(?:细化|展开|扩展|详细规划)[第\s]*(\d+)[章节]', text)
+        if m:
+            return {
+                "tool": "expand_chapter",
+                "params": {"chapter_number": int(m.group(1))},
+                "reason": f"用户要求细化第{m.group(1)}章"
+            }
+
+        # ── 润色章节 ──────────────────────────────────────────
+        m = re.search(r'润色[第\s]*(\d+)[章节]', text)
+        if m:
+            return {
+                "tool": "polish_chapter",
+                "params": {"chapter_number": int(m.group(1))},
+                "reason": f"用户要求润色第{m.group(1)}章"
+            }
+
+        # ── 修改/重写章节（可带要求）──────────────────────────
+        m = re.search(r'(?:修改|重写|改写|重新写)[第\s]*(\d+)[章节][，,。\s]*(.+)?', text)
+        if m:
+            ch_num = int(m.group(1))
+            req = (m.group(2) or text).strip()
+            return {
+                "tool": "revise_chapter",
+                "params": {"chapter_number": ch_num, "requirements": req},
+                "reason": f"用户要求修改第{ch_num}章"
+            }
+
+        # ── 修改大纲 ──────────────────────────────────────────
+        if re.search(r'(?:修改|调整|改|更新|优化)(?:一下|下)?大纲', text):
+            return {
+                "tool": "modify_outline",
+                "params": {"feedback": text},
+                "reason": "用户要求修改大纲"
+            }
+
+        # ── 修改角色（尝试提取角色名）────────────────────────
+        m = re.search(r'(?:修改|调整|改)[一下]?角色[：:\s]*([^\s，,的]+)', text)
+        if m:
+            char_name = m.group(1)
+            return {
+                "tool": "modify_character",
+                "params": {"character_name": char_name, "modifications": text},
+                "reason": f"用户要求修改角色 {char_name}"
+            }
+        # 不含具体名字的角色修改
+        if re.search(r'(?:修改|调整|改)[一下]?(?:角色|人物)', text):
+            return {
+                "tool": "modify_character",
+                "params": {"modifications": text},
+                "reason": "用户要求修改角色"
+            }
+
+        # ── 未命中任何规则 ────────────────────────────────────
+        return None
+
     async def execute_action(
         self,
         action: Dict[str, Any],
@@ -325,15 +398,45 @@ class DialogueAgent(BaseAgent):
         elif tool_name == "modify_outline":
             # 大纲细化
             outline_agent = OutlineAgent()
+
+            # 获取用户反馈：优先用 params.feedback，其次用 reason
+            user_feedback = params.get("feedback") or reason or "优化大纲"
+
+            # 添加角色信息到上下文中（完整信息）
+            character_context = ""
+            if novel.characters:
+                char_lines = []
+                for c in novel.characters:
+                    rel_str = ", ".join(f"{k}:{v}" for k, v in c.relationships.items()) if c.relationships else "无"
+                    arc_str = f", 发展弧线={c.arc}" if c.arc else ""
+                    skills_str = f", 技能={c.skills}" if c.skills else ""
+                    quirk_str = f", 个人特点={c.quirk}" if c.quirk else ""
+                    appearance_str = f", 外貌={c.appearance}" if c.appearance else ""
+
+                    char_lines.append(
+                        f"- {c.name}（{c.role}）\n"
+                        f"  性格: {c.personality}\n"
+                        f"  背景: {c.background}\n"
+                        f"  动机: {c.motivation}"
+                        f"{appearance_str}{skills_str}{arc_str}{quirk_str}\n"
+                        f"  关系: {rel_str}"
+                    )
+                character_context = "\n当前角色列表：\n" + "\n".join(char_lines)
+
+            # 将角色信息附加到反馈中
+            full_feedback = f"{user_feedback}\n\n{character_context}"
+
             result = await outline_agent.refine_outline(
                 current_outline=novel.outline,
-                user_feedback=params.get("feedback", reason)
+                user_feedback=full_feedback
             )
 
             if result.get("status") == "success":
                 # 保存细化后的大纲
                 novel.outline = result.get("outline")
                 file_manager.save_novel_json(novel)
+                file_manager.save_outline_markdown(novel.outline, novel_id)
+                result["message"] = "大纲已修改"
 
             return result
 
@@ -403,6 +506,43 @@ class DialogueAgent(BaseAgent):
 
             return result
 
+        elif tool_name == "redesign_characters":
+            # 重新设计整个角色列表
+            character_agent = CharacterAgent()
+            requirements = params.get("requirements", reason)
+
+            # 构建当前角色信息供AI参考
+            current_chars_desc = ""
+            if novel.characters:
+                char_lines = []
+                for c in novel.characters:
+                    char_lines.append(f"- {c.name}（{c.role}）: 性格={c.personality}, 背景={c.background}, 关系={c.relationships}")
+                current_chars_desc = "\n".join(char_lines)
+
+            combined_requirements = (
+                f"用户修改要求：{requirements}\n\n"
+                f"请在以下角色基础上进行调整，保持合理的角色结构：\n{current_chars_desc}"
+            )
+
+            result = await character_agent.generate_characters(
+                outline=novel.outline,
+                character_requirements=combined_requirements,
+                chapter_count=len(novel.outline.chapters_plan) if novel.outline else 20,
+                title=novel.title,
+                genre=novel.genre,
+                theme=novel.outline.theme if novel.outline else ""
+            )
+
+            if result.get("status") == "success" and result.get("characters"):
+                novel.characters = result["characters"]
+                file_manager.save_novel_json(novel)
+                file_manager.save_characters_markdown(novel.characters, novel_id)
+                result["message"] = f"角色列表已重新设计，共 {len(novel.characters)} 个角色"
+            else:
+                result["message"] = "角色列表重新设计失败"
+
+            return result
+
         elif tool_name == "revise_chapter":
             # 章节修改
             chapter_num = params.get("chapter_number")
@@ -427,10 +567,17 @@ class DialogueAgent(BaseAgent):
             )
 
             if result.get("status") == "success":
-                # 更新章节
-                novel.chapters = [result.get("chapter") if c.number == chapter_num else c
-                                 for c in (novel.chapters or [])]
+                revised_ch = result.get("chapter")
+                novel.chapters = [
+                    revised_ch if c.number == chapter_num else c
+                    for c in (novel.chapters or [])
+                ]
                 file_manager.save_novel_json(novel)
+                file_manager.save_chapter_markdown(revised_ch, novel_id)
+                result["message"] = (
+                    f"第{chapter_num}章已修改并保存"
+                    f"（v{revised_ch.version}，{revised_ch.word_count}字）"
+                )
 
             return result
 
@@ -458,10 +605,17 @@ class DialogueAgent(BaseAgent):
             )
 
             if result.get("status") == "success":
-                # 更新章节
-                novel.chapters = [result.get("chapter") if c.number == chapter_num else c
-                                 for c in (novel.chapters or [])]
+                polished_ch = result.get("chapter")
+                novel.chapters = [
+                    polished_ch if c.number == chapter_num else c
+                    for c in (novel.chapters or [])
+                ]
                 file_manager.save_novel_json(novel)
+                file_manager.save_chapter_markdown(polished_ch, novel_id)
+                result["message"] = (
+                    f"第{chapter_num}章已润色并保存"
+                    f"（v{polished_ch.version}，{polished_ch.word_count}字）"
+                )
 
             return result
 

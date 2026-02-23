@@ -14,6 +14,7 @@ class LLMProvider(str, Enum):
     OPENAI = "openai"
     DEEPSEEK = "deepseek"
     AZURE = "azure"
+    GEMINI = "gemini"
 
 
 class Settings(BaseSettings):
@@ -48,16 +49,16 @@ class Settings(BaseSettings):
     azure_openai_deployment: Optional[str] = None
     azure_openai_api_version: str = "2024-02-01"
 
+    # Gemini配置
+    gemini_api_key: Optional[str] = None
+
     # 模型配置 (根据provider自动选择)
     default_model: Optional[str] = None  # 如果为None,根据provider自动选择
     temperature: float = 0.7
     max_tokens: int = 8192  # DeepSeek API 限制最大 8192（约5000-6000中文字）
 
     # 项目路径配置
-    output_dir: str = "novel_ai_agent/output"
-    novels_dir: str = "novel_ai_agent/output/novels"
-    outlines_dir: str = "novel_ai_agent/output/outlines"
-    characters_dir: str = "novel_ai_agent/output/characters"
+    output_dir: str = "output"  # 根目录 output/，每未小说建一个子目录
 
     # 向量数据库配置
     chroma_persist_directory: str = "novel_ai_agent/data/chroma"
@@ -88,7 +89,8 @@ class Settings(BaseSettings):
             "anthropic": "claude-sonnet-4-20250514",
             "openai": "gpt-4o",
             "deepseek": "deepseek-reasoner",
-            "azure": "gpt-4"
+            "azure": "gpt-4",
+            "gemini": "gemini-2.0-flash"
         }
         return model_defaults.get(self.llm_provider, "claude-sonnet-4-20250514")
 
@@ -103,7 +105,8 @@ class Settings(BaseSettings):
             "anthropic": self.anthropic_api_key,
             "openai": self.openai_api_key,
             "deepseek": self.deepseek_api_key,
-            "azure": self.azure_openai_api_key
+            "azure": self.azure_openai_api_key,
+            "gemini": self.gemini_api_key
         }
         return key_mapping.get(self.llm_provider)
 
@@ -132,6 +135,9 @@ class Settings(BaseSettings):
                 return False, "缺少AZURE_OPENAI_ENDPOINT配置"
             if not self.azure_openai_deployment:
                 return False, "缺少AZURE_OPENAI_DEPLOYMENT配置"
+        elif provider == "gemini":
+            if not self.gemini_api_key:
+                return False, "缺少GEMINI_API_KEY配置"
         else:
             return False, f"不支持的LLM提供商: {provider}"
 

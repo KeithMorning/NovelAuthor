@@ -145,8 +145,8 @@ class CharacterAgent(BaseAgent):
                 message=f"开始调用API, model={getattr(self.llm, 'model_name', 'unknown')}"
             )
 
-            response = await json_llm.ainvoke(messages)
-            content = response.content
+            response_content = await self._stream_invoke(json_llm, messages)
+            content = response_content
 
             # 记录API输出
             self.logger.log(
@@ -257,8 +257,8 @@ class CharacterAgent(BaseAgent):
             # 使用 JSON Output Mode 确保输出合法的 JSON
             json_llm = self._get_json_llm()
 
-            response = await json_llm.ainvoke(messages)
-            content = response.content
+            response_content = await self._stream_invoke(json_llm, messages)
+            content = response_content
 
             # 解析 JSON 响应
             character_data = extract_json_from_response(content, "debug_character_refinement")

@@ -1,6 +1,13 @@
 """
 文件管理工具
 负责小说、大纲、角色设定的文件读写
+
+目录结构（每部小说独立一个目录）：
+  output/
+    <novel_id>/
+      novels/          # JSON 存档 + 章节 MD + 完整版 MD
+      outlines/        # 大纲 MD
+      characters/      # 角色 MD
 """
 import os
 import json
@@ -19,217 +26,143 @@ class FileManager:
 
     def __init__(self):
         self.settings = get_settings()
-        self._ensure_directories()
+        # 确保根输出目录存在
+        Path(self.settings.output_dir).mkdir(parents=True, exist_ok=True)
 
-    def _ensure_directories(self):
-        """确保输出目录存在"""
-        dirs = [
-            self.settings.output_dir,
-            self.settings.novels_dir,
-            self.settings.outlines_dir,
-            self.settings.characters_dir,
-        ]
-        for dir_path in dirs:
-            Path(dir_path).mkdir(parents=True, exist_ok=True)
+    # ── 路径辅助 ────────────────────────────────────────────────
 
-    def save_novel_markdown(self, novel: Novel, include_metadata: bool = True) -> str:
+    def _novel_dirs(self, novel_id: str) -> dict:
         """
-        保存小说为Markdown文件
+        返回某部小说的三个子目录路径，并自动创建。
 
-        Args:
-            novel: 小说对象
-            include_metadata: 是否包含元数据
-
-        Returns:
-            str: 保存的文件路径
+        结构：
+          output/<novel_id>/novels/
+          output/<novel_id>/outlines/
+          output/<novel_id>/characters/
         """
-        filename = f"{novel.id}_{novel.title}.md"
-        # 移除文件名中的非法字符
-        filename = "".join(c for c in filename if c.isalnum() or c in (' ', '_', '-', '.')).strip()
-        filepath = os.path.join(self.settings.novels_dir, filename)
+        base = Path(self.settings.output_dir) / novel_id
+        dirs = {
+            "base":       base,
+            "novels":     base / "novels",
+            "outlines":   base / "outlines",
+            "characters": base / "characters",
+        }
+        for p in dirs.values():
+            p.mkdir(parents=True, exist_ok=True)
+        return dirs
 
-        markdown_content = novel.to_markdown(include_metadata=include_metadata)
-
-        with open(filepath, 'w', encoding='utf-8') as f:
-            f.write(markdown_content)
-
-        return filepath
+    # ── 小说 JSON 存档 ───────────────────────────────────────────
 
     def save_novel_json(self, novel: Novel) -> str:
-        """
-        保存小说为JSON文件 (用于数据持久化)
-
-        Args:
-            novel: 小说对象
-
-        Returns:
-            str: 保存的文件路径
-        """
-        filename = f"{novel.id}.json"
-        filepath = os.path.join(self.settings.novels_dir, filename)
-
-        with open(filepath, 'w', encoding='utf-8') as f:
-            f.write(novel.model_dump_json(indent=2, ensure_ascii=False))
-
-        return filepath
+        """保存小说为 JSON 文件（数据持久化）"""
+        dirs = self._novel_dirs(novel.id)
+        filepath = dirs["novels"] / f"{novel.id}.json"
+        filepath.write_text(
+            novel.model_dump_json(indent=2, ensure_ascii=False),
+            encoding="utf-8"
+        )
+        return str(filepath)
 
     def load_novel_json(self, novel_id: str) -> Optional[Novel]:
-        """
-        从JSON文件加载小说
+        """从 JSON 文件加载小说，不存在则返回 None"""
+        filepath = Path(self.settings.output_dir) / novel_id / "novels" / f"{novel_id}.json"
+        if not filepath.exists():
+            # 兼容旧路径：novel_ai_agent/output/novels/<novel_id>.json
+            legacy = Path("novel_ai_agent/output/novels") / f"{novel_id}.json"
+            if legacy.exists():
+                filepath = legacy
+            else:
+                return None
+        data = json.loads(filepath.read_text(encoding="utf-8"))
+        return Novel(**data)
 
-        Args:
-            novel_id: 小说ID
+    # ── Markdown 导出 ────────────────────────────────────────────
 
-        Returns:
-            Novel: 小说对象,如果不存在则返回None
-        """
-        filename = f"{novel_id}.json"
-        filepath = os.path.join(self.settings.novels_dir, filename)
-
-        if not os.path.exists(filepath):
-            return None
-
-        with open(filepath, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-            return Novel(**data)
+    def save_novel_markdown(self, novel: Novel, include_metadata: bool = True) -> str:
+        """保存完整小说为 Markdown"""
+        dirs = self._novel_dirs(novel.id)
+        raw_name = f"{novel.id}_{novel.title}.md"
+        filename = "".join(c for c in raw_name if c.isalnum() or c in (" ", "_", "-", ".")).strip()
+        filepath = dirs["novels"] / filename
+        filepath.write_text(novel.to_markdown(include_metadata=include_metadata), encoding="utf-8")
+        return str(filepath)
 
     def save_outline_markdown(self, outline: Outline, novel_id: str) -> str:
-        """
-        保存大纲为Markdown文件
-
-        Args:
-            outline: 大纲对象
-            novel_id: 小说ID
-
-        Returns:
-            str: 保存的文件路径
-        """
-        filename = f"{novel_id}_outline_v{outline.version}.md"
-        filepath = os.path.join(self.settings.outlines_dir, filename)
-
-        markdown_content = outline.to_markdown()
-
-        with open(filepath, 'w', encoding='utf-8') as f:
-            f.write(markdown_content)
-
-        return filepath
+        """保存大纲为 Markdown"""
+        dirs = self._novel_dirs(novel_id)
+        filepath = dirs["outlines"] / f"{novel_id}_outline_v{outline.version}.md"
+        filepath.write_text(outline.to_markdown(), encoding="utf-8")
+        return str(filepath)
 
     def save_characters_markdown(self, characters: list[Character], novel_id: str) -> str:
-        """
-        保存角色设定为Markdown文件
+        """保存角色设定为 Markdown"""
+        dirs = self._novel_dirs(novel_id)
+        filepath = dirs["characters"] / f"{novel_id}_characters.md"
 
-        Args:
-            characters: 角色列表
-            novel_id: 小说ID
-
-        Returns:
-            str: 保存的文件路径
-        """
-        filename = f"{novel_id}_characters.md"
-        filepath = os.path.join(self.settings.characters_dir, filename)
-
-        md = f"# 角色设定\n\n"
+        md = "# 角色设定\n\n"
         md += f"**更新时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
         md += "---\n\n"
-
         for character in characters:
             md += character.to_markdown()
             md += "---\n\n"
 
-        with open(filepath, 'w', encoding='utf-8') as f:
-            f.write(md)
-
-        return filepath
+        filepath.write_text(md, encoding="utf-8")
+        return str(filepath)
 
     def save_chapter_markdown(self, chapter: Chapter, novel_id: str) -> str:
-        """
-        保存单个章节为Markdown文件
+        """保存单个章节为 Markdown"""
+        dirs = self._novel_dirs(novel_id)
+        filepath = dirs["novels"] / f"{novel_id}_chapter_{chapter.number:03d}.md"
+        filepath.write_text(chapter.to_markdown(include_metadata=True), encoding="utf-8")
+        return str(filepath)
 
-        Args:
-            chapter: 章节对象
-            novel_id: 小说ID
+    def export_novel_with_version(self, novel: Novel) -> str:
+        """导出带时间戳版本的小说备份"""
+        dirs = self._novel_dirs(novel.id)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        raw_name = f"{novel.id}_{novel.title}_backup_{timestamp}.md"
+        filename = "".join(c for c in raw_name if c.isalnum() or c in (" ", "_", "-", ".")).strip()
+        filepath = dirs["novels"] / filename
+        filepath.write_text(novel.to_markdown(include_metadata=True), encoding="utf-8")
+        return str(filepath)
 
-        Returns:
-            str: 保存的文件路径
-        """
-        filename = f"{novel_id}_chapter_{chapter.number:03d}.md"
-        filepath = os.path.join(self.settings.novels_dir, filename)
-
-        markdown_content = chapter.to_markdown(include_metadata=True)
-
-        with open(filepath, 'w', encoding='utf-8') as f:
-            f.write(markdown_content)
-
-        return filepath
+    # ── 小说列表 ─────────────────────────────────────────────────
 
     def list_novels(self) -> list[str]:
-        """
-        列出所有小说ID
+        """列出所有小说 ID（根据 output/ 下的子目录）"""
+        root = Path(self.settings.output_dir)
+        if not root.exists():
+            return []
 
-        Returns:
-            list[str]: 小说ID列表
-        """
-        novels_dir = Path(self.settings.novels_dir)
-        json_files = novels_dir.glob("*.json")
-        return [f.stem for f in json_files]
+        novel_ids = []
+        for entry in root.iterdir():
+            if entry.is_dir():
+                json_path = entry / "novels" / f"{entry.name}.json"
+                if json_path.exists():
+                    novel_ids.append(entry.name)
+
+        # 兼容旧 flat 目录（novel_ai_agent/output/novels/*.json）
+        legacy_dir = Path("novel_ai_agent/output/novels")
+        if legacy_dir.exists():
+            for f in legacy_dir.glob("*.json"):
+                if f.stem not in novel_ids:
+                    novel_ids.append(f.stem)
+
+        return novel_ids
+
+    # ── 删除 ─────────────────────────────────────────────────────
 
     def delete_novel(self, novel_id: str) -> bool:
-        """
-        删除小说相关的所有文件
-
-        Args:
-            novel_id: 小说ID
-
-        Returns:
-            bool: 是否删除成功
-        """
+        """删除小说的整个目录"""
+        import shutil
         try:
-            # 删除JSON文件
-            json_file = os.path.join(self.settings.novels_dir, f"{novel_id}.json")
-            if os.path.exists(json_file):
-                os.remove(json_file)
-
-            # 删除Markdown文件
-            novels_dir = Path(self.settings.novels_dir)
-            for md_file in novels_dir.glob(f"{novel_id}*.md"):
-                os.remove(md_file)
-
-            # 删除大纲文件
-            outlines_dir = Path(self.settings.outlines_dir)
-            for outline_file in outlines_dir.glob(f"{novel_id}*.md"):
-                os.remove(outline_file)
-
-            # 删除角色文件
-            characters_dir = Path(self.settings.characters_dir)
-            for char_file in characters_dir.glob(f"{novel_id}*.md"):
-                os.remove(char_file)
-
+            novel_dir = Path(self.settings.output_dir) / novel_id
+            if novel_dir.exists():
+                shutil.rmtree(novel_dir)
             return True
         except Exception as e:
             print(f"删除小说 {novel_id} 时出错: {e}")
             return False
-
-    def export_novel_with_version(self, novel: Novel) -> str:
-        """
-        导出带时间戳版本的小说备份
-
-        Args:
-            novel: 小说对象
-
-        Returns:
-            str: 保存的文件路径
-        """
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        filename = f"{novel.id}_{novel.title}_backup_{timestamp}.md"
-        filename = "".join(c for c in filename if c.isalnum() or c in (' ', '_', '-', '.')).strip()
-        filepath = os.path.join(self.settings.novels_dir, filename)
-
-        markdown_content = novel.to_markdown(include_metadata=True)
-
-        with open(filepath, 'w', encoding='utf-8') as f:
-            f.write(markdown_content)
-
-        return filepath
 
 
 # 全局文件管理器实例

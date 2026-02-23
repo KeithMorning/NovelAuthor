@@ -10,6 +10,7 @@ AVAILABLE_TOOLS = """
 | 工具名 | 参数 | 说明 |
 |--------|------|------|
 | `modify_character` | `character_name`, `modifications` | 修改指定角色的设定 |
+| `redesign_characters` | `requirements` | 重新设计整个角色列表（当修改会影响多人时使用） |
 | `modify_outline` | `feedback` | 修改大纲 |
 | `expand_chapter` | `chapter_number` | 细化章节规划 |
 | `revise_chapter` | `chapter_number`, `requirements` | 重写章节内容 |
@@ -43,6 +44,11 @@ action对象格式：
 - 都市风格 → 角色特点应贴近现代生活（如热衷于理财、社交达人）
 - **避免**：在科幻小说中出现"收集旧钢笔"这种不符合设定的特点
 - **并非所有角色都需要个人特点**：主角可以有鲜明特点，配角保持自然即可，避免刻意呆板
+
+**【重要】选择合适的角色修改工具**：
+- 如果只修改单个角色的性格/背景，不影响其他人 → 使用 `modify_character`
+- 如果修改会影响人物关系（如反派变强需要调整主角的对手关系）→ 使用 `redesign_characters`
+- 如果用户说"调整角色关系"、"重新设计角色" → 使用 `redesign_characters`
 
 ## JSON输出示例
 
@@ -93,6 +99,20 @@ action对象格式：
       "feedback": "调整故事走向"
     },
     "reason": "用户明确要求修改大纲"
+  }
+}
+```
+
+示例5（用户要求重新设计角色，影响多人关系）:
+```json
+{
+  "response": "好的，我来重新设计角色列表，确保人物关系合理。",
+  "action": {
+    "tool": "redesign_characters",
+    "params": {
+      "requirements": "反派变成更聪明更有野心的人，需要调整主角和反派的对抗关系"
+    },
+    "reason": "修改反派会影响与主角的关系，需要重新设计整个角色关系网"
   }
 }
 ```

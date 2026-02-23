@@ -138,8 +138,7 @@ class OutlineAgent(BaseAgent):
                 HumanMessage(content=user_prompt)
             ]
 
-            response = await json_llm.ainvoke(messages)
-            content = response.content
+            content = await self._stream_invoke(json_llm, messages)
 
             # 解析JSON响应
             expansion_data = extract_json_from_response(content, "expansion")
@@ -211,8 +210,7 @@ class OutlineAgent(BaseAgent):
                 HumanMessage(content=user_prompt)
             ]
 
-            response = await json_llm.ainvoke(messages)
-            content = response.content
+            content = await self._stream_invoke(json_llm, messages)
 
             # 解析JSON响应
             outline_data = extract_json_from_response(content, "debug_outline")
@@ -306,8 +304,7 @@ class OutlineAgent(BaseAgent):
                     HumanMessage(content=user_prompt)
                 ]
 
-                response = await json_llm.ainvoke(messages)
-                content = response.content
+                content = await self._stream_invoke(json_llm, messages)
 
                 # 解析JSON响应
                 chapter_data = extract_json_from_response(content, "debug_chapter")
@@ -344,8 +341,7 @@ class OutlineAgent(BaseAgent):
                 HumanMessage(content=user_prompt)
             ]
 
-            response = await json_llm.ainvoke(messages)
-            content = response.content
+            content = await self._stream_invoke(json_llm, messages)
 
             # 解析JSON响应
             outline_data = extract_json_from_response(content, "debug_outline")

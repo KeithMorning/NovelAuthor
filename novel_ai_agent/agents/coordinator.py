@@ -101,7 +101,8 @@ class CoordinatorAgent(BaseAgent):
         style: str = "中性风格",
         chapter_count: int = 20,
         user_requirements: str = "",
-        novel_id: Optional[str] = None
+        novel_id: Optional[str] = None,
+        progress_callback: Optional[Callable] = None
     ) -> Dict[str, Any]:
         """
         完整的小说创建工作流
@@ -114,10 +115,19 @@ class CoordinatorAgent(BaseAgent):
             chapter_count: 章节数
             user_requirements: 用户需求
             novel_id: 可选的小说ID，如果未提供则自动生成
+            progress_callback: 可选的进度回调函数，签名为 (step_name, status, message)
+                               status 可以是 "start" / "done" / "error"
 
         Returns:
             Dict: 包含novel_id和创建状态
         """
+
+        async def _notify(step: str, status: str, message: str):
+            if progress_callback:
+                result = progress_callback(step, status, message)
+                if asyncio.iscoroutine(result):
+                    await result
+
         # 生成novel_id（用于日志）
         if not novel_id:
             novel_id = f"novel_{uuid.uuid4().hex[:8]}"
@@ -156,6 +166,7 @@ class CoordinatorAgent(BaseAgent):
                 WorkflowStep.CHARACTER_GENERATION,
                 "开始生成角色"
             )
+            await _notify("角色生成", "start", f"正在生成角色设定...")
 
             self.character_agent = CharacterAgent()
             # 先生成角色，不需要outline（因为还没有）
@@ -175,6 +186,7 @@ class CoordinatorAgent(BaseAgent):
                     Exception(char_result.get("message", "Unknown error")),
                     details=char_result
                 )
+                await _notify("角色生成", "error", f"角色生成失败: {char_result.get('message', '')}")
                 return char_result
 
             # 保存角色到novel对象（临时存储，用于后续生成大纲）
@@ -190,12 +202,14 @@ class CoordinatorAgent(BaseAgent):
                     "characters": [char.name for char in novel.characters]
                 }
             )
+            await _notify("角色生成", "done", f"角色生成完成，共 {len(novel.characters)} 个角色")
 
             # 3. 生成大纲（使用已创建的角色信息）
             logger.step_start(
                 WorkflowStep.OUTLINE_GENERATION,
                 f"开始生成大纲，目标章节数: {chapter_count}"
             )
+            await _notify("大纲生成", "start", f"正在生成 {chapter_count} 章大纲...")
 
             self.outline_agent = OutlineAgent()
 
@@ -218,6 +232,7 @@ class CoordinatorAgent(BaseAgent):
                     Exception(outline_result.get("message", "Unknown error")),
                     details=outline_result
                 )
+                await _notify("大纲生成", "error", f"大纲生成失败: {outline_result.get('message', '')}")
                 return outline_result
 
             novel.outline = outline_result["outline"]
@@ -230,12 +245,14 @@ class CoordinatorAgent(BaseAgent):
                     "plot_points": len(novel.outline.plot_points)
                 }
             )
+            await _notify("大纲生成", "done", f"大纲生成完成，包含 {len(novel.outline.chapters_plan)} 章")
 
             # 4. 保存小说
             logger.step_start(
                 WorkflowStep.FILE_SAVING,
                 "保存小说文件"
             )
+            await _notify("保存文件", "start", "正在保存大纲和角色文件...")
 
             self.current_novel = novel
             file_manager.save_novel_json(novel)
@@ -249,6 +266,7 @@ class CoordinatorAgent(BaseAgent):
                     "files": ["novel.json", "outline.md", "characters.md"]
                 }
             )
+            await _notify("保存文件", "done", "文件保存完成")
 
             # 5. 加载到记忆系统 (暂时禁用,因为目前未使用)
             # TODO: 当实现章节写作时的上下文检索功能后，再启用此步骤
@@ -457,7 +475,8 @@ class CoordinatorAgent(BaseAgent):
         novel_id: str,
         chapter_number: int,
         enable_expansion: bool = True,
-        force: bool = False
+        force: bool = False,
+        on_token: Optional[Callable] = None
     ) -> Dict[str, Any]:
         """
         章节写作工作流
@@ -565,7 +584,8 @@ class CoordinatorAgent(BaseAgent):
                 chapter_plan=chapter_plan,
                 outline=novel.outline,
                 characters=novel.characters,
-                previous_chapters=previous_chapters if previous_chapters else None
+                previous_chapters=previous_chapters if previous_chapters else None,
+                on_token=on_token
             )
 
             if write_result["status"] != "success":

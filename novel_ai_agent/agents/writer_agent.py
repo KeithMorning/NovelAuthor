@@ -4,7 +4,7 @@
 """
 import json
 from datetime import datetime
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Callable
 from langchain_core.messages import HumanMessage, SystemMessage
 from .base_agent import BaseAgent
 from ..models.chapter import Chapter, ChapterStatus
@@ -68,6 +68,7 @@ class WriterAgent(BaseAgent):
         outline: Outline,
         characters: List[Character],
         previous_chapters: Optional[List[Chapter]] = None,
+        on_token: Optional[Callable[[str], None]] = None,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -156,21 +157,17 @@ class WriterAgent(BaseAgent):
                 message=f"API请求: model={self.llm.model_name}, max_tokens={self.llm.max_tokens}, prompt长度={len(user_prompt)}"
             )
 
-            # 调用LLM
-            response = await self.llm.ainvoke(messages)
-            content = response.content
-
-            # 记录API响应信息到日志
-            usage_info = {}
-            if hasattr(response, 'usage_metadata'):
-                usage_info = response.usage_metadata
-            elif hasattr(response, 'response_metadata') and 'token_usage' in response.response_metadata:
-                usage_info = response.response_metadata['token_usage']
+            # 流式调用LLM，实时输出 token
+            content = await self._stream_invoke(
+                self.llm,
+                messages,
+                on_token=on_token
+            )
 
             self.logger.log(
                 level=LogLevel.INFO,
                 step=WorkflowStep.CHAPTER_WRITING,
-                message=f"API响应: content长度={len(content)}, usage={usage_info}"
+                message=f"API响应: content长度={len(content)}"
             )
 
             # 计算输入token数量（粗略估算）
@@ -237,6 +234,7 @@ class WriterAgent(BaseAgent):
         chapter: Chapter,
         revision_requirements: str,
         context: str = "",
+        on_token: Optional[Callable[[str], None]] = None,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -267,8 +265,11 @@ class WriterAgent(BaseAgent):
                 HumanMessage(content=user_prompt)
             ]
 
-            response = await self.llm.ainvoke(messages)
-            new_content = response.content
+            new_content = await self._stream_invoke(
+                self.llm,
+                messages,
+                on_token=on_token
+            )
 
             # 创建新版本的Chapter（使用 model_copy 保留伏笔等结构化数据）
             revised_chapter = chapter.model_copy(update={
@@ -364,12 +365,12 @@ class WriterAgent(BaseAgent):
             HumanMessage(content=prompt)
         ]
 
-        # 使用 JSON Output Mode 提高解析可靠性
+        # 使用 JSON Output Mode 提高解析可靠性，流式静默收集
         json_llm = self._get_json_llm()
-        response = await json_llm.ainvoke(messages)
+        digest_content = await self._stream_invoke(json_llm, messages)
 
         # 解析JSON
-        result = extract_json_from_response(response.content, "digest")
+        result = extract_json_from_response(digest_content, "digest")
 
         # 确保所有字段存在且类型正确
         return {

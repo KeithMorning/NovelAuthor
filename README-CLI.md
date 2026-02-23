@@ -14,6 +14,9 @@ python3 main.py init
 # 创建小说
 python3 main.py create --title "我的小说" --genre "科幻" --theme "AI觉醒"
 
+# 一键自动创作（创建 + 写完全部章节）
+python3 main.py create --title "我的小说" --genre "科幻" --theme "AI觉醒" --auto
+
 # 查看帮助
 python3 main.py --help
 ```
@@ -61,6 +64,13 @@ python3 main.py --help
 ### create - 创建小说
 
 ```bash
+# 基础创建
+python3 main.py create \
+  --title "时空守护者" \
+  --genre "科幻" \
+  --theme "量子物理学家发现平行宇宙"
+
+# 完整参数示例
 python3 main.py create \
   --title "时空守护者" \
   --genre "科幻" \
@@ -68,6 +78,13 @@ python3 main.py create \
   --style "刘慈欣" \
   --chapters 15 \
   --interactive
+
+# 一键自动创作（创建后自动写完所有章节）
+python3 main.py create \
+  --title "我的小说" \
+  --genre "科幻" \
+  --theme "AI觉醒" \
+  --auto
 ```
 
 **参数**:
@@ -78,6 +95,7 @@ python3 main.py create \
 - `--chapters, -n`: 章节数量（默认：20）
 - `--requirements, -r`: 额外需求
 - `--interactive, -i`: 创建后进入交互式对话模式
+- `--auto, -a`: 创建后自动按顺序写完所有章节
 
 ### write - 写作章节
 
@@ -155,13 +173,19 @@ python3 main.py edit-outline --id <novel_id> --feedback "第3章需要更激烈�
 ### edit-character - 修改角色
 
 ```bash
-python3 main.py edit-character --id <novel_id> --name "主角" --feedback "增加一些缺点"
+# 指定角色名修改
+python3 main.py edit-character --id <novel_id> --name "林思远" --feedback "个人特点改成更合理的"
+
+# 从反馈中自动分析角色名
+python3 main.py edit-character --id <novel_id> --feedback "林思远的个人特点改成更合理的"
 ```
 
 **参数**:
 - `--id, -i`: 小说ID（必填）
-- `--name, -n`: 角色名（必填）
+- `--name, -n`: 角色名（可选，不指定则从反馈中分析）
 - `--feedback, -f`: 修改意见（必填）
+
+**输出**: 自动展示修改前后的对比（性格、背景、动机、个人特点、技能）
 
 ### expand-chapters - 细化章节规划
 
@@ -201,15 +225,17 @@ python3 main.py recommend-style --genre "科幻"
 
 ## 交互式模式
 
-在交互式模式下，你可以：
+在交互式模式下，你可以用自然语言表达修改需求，AI会自动理解意图：
 
-- **细化章节**: 输入 "细化第3章" 来扩展章节规划
-- **修改大纲**: 输入 "修改大纲，调整故事走向"
-- **修改角色**: 输入 "修改角色，让反派更聪明"
-- **重写章节**: 输入 "修改第5章"
+- **细化章节**: 输入 "细化第3章" 或 "把第3章展开详细规划"
+- **修改大纲**: 输入 "修改大纲，调整故事走向" 或 "这个结局不太满意"
+- **修改角色**: 输入 "林思远的个人特点太奇怪了，改成更合理的" 或 "反派太弱了，改得更聪明"
+- **重写章节**: 输入 "修改第5章，让冲突更激烈"
 - **润色章节**: 输入 "润色第2章"
 
-输入 "quit" 或 "exit" 退出对话。
+AI会自动识别你的意图并选择合适的工具执行。输入 "quit" 或 "exit" 退出对话。
+
+**注意**: 角色特点会符合小说风格（如科幻风格不会出现"收集旧钢笔"），配角不需要刻意添加特点。
 
 ## 配置
 
