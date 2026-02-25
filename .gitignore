@@ -18,3 +18,4 @@ novel_ai_agent/data/
 /novel_ai_agent/output/*/**
 /frontend/node_modules
 /logs
+/output

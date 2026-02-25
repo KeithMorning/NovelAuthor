@@ -12,8 +12,57 @@ OUTLINE_SYSTEM_PROMPT = """你是一位专业的小说策划师，擅长构建�
 
 输出要求：
 - 使用JSON格式输出，便于程序解析
-- 包含故事简介、主题、情节点和章节规划
-- 每个章节都要有清晰的梗概和关键事件
+- 包含故事简介、主题、情节点等
+"""
+
+PRELIMINARY_OUTLINE_GENERATION_PROMPT = """请根据以下信息创建一个小说的初级大纲（无需细化章节，仅构建世界观和故事主轴）：
+
+**小说信息**:
+- 标题: {title}
+- 类型: {genre}
+- 主题: {theme}
+- 预计总章节数: {chapter_count}
+
+**核心概念与设定（强制物理法则/世界观约束）**:
+{core_concepts}
+
+**用户需求**:
+{user_requirements}
+
+请生成一个包含以下内容的初级大纲：
+
+1. **故事简介** (150-300字，要求包含核心冲突、高潮点和结局走向)
+2. **主题思想** (简要说明故事探讨的深层问题)
+3. **故事背景设定** (详细描述世界观、核心设定和环境氛围)
+4. **主要情节点** (要求：
+   - 如果总章节数 <= 10，请设计 3-5 个关键转折点
+   - 如果总章节数 > 10，请设计 6-10 个关键转折点
+   - 每个情节点包含：名称、描述、所在章节范围、重要性
+   - 确保情节点的分布合理，避免出现故事中后期情节稀释或节奏拖累)
+5. **核心冲突与核心对立面规划**（重要！必须包含）：
+   - 冲突的核心性质（理念分歧、生存资源、信息不对称等，而非简单的善恶对立）
+   - 持不同理念者/对立面的核心动机（为什么他们认为自己是对的）
+   - 对立面的能力和威胁程度（要与主角方形成有效制衡）
+   - 核心冲突如何随着情节推进而演变、升级
+   - 关键理念对抗节点（至少3个主要冲突爆发点）
+
+以JSON格式输出，结构如下：
+```json
+{{
+  "summary": "故事简介",
+  "theme": "主题思想",
+  "core_concepts": "核心概念与世界观设定",
+  "setting": "故事背景",
+  "plot_points": [
+    {{
+      "name": "情节点名称",
+      "description": "详细描述",
+      "chapter_range": "第X-Y章",
+      "importance": "高"
+    }}
+  ]
+}}
+```
 """
 
 OUTLINE_GENERATION_PROMPT = """请根据以下信息创建一个完整的小说大纲：
@@ -25,10 +74,16 @@ OUTLINE_GENERATION_PROMPT = """请根据以下信息创建一个完整的小说�
 - 目标章节数: {chapter_count}
 - 每章预计字数: {words_per_chapter}
 
+**核心概念与设定（高级限制：所有情节必须绝对符合此逻辑）**:
+{core_concepts}
+
 **用户需求**:
 {user_requirements}
 
-**角色设定 (必须使用这些角色名)**:
+**初级大纲 (必须遵循此故事脉络与世界观)**:
+{preliminary_outline_content}
+
+**角色设定 (严格按照此设定安排剧情)**:
 {character_info}
 
 请生成一个包含以下内容的大纲：
@@ -41,16 +96,18 @@ OUTLINE_GENERATION_PROMPT = """请根据以下信息创建一个完整的小说�
    - 如果总章节数 > 10，请设计 6-10 个关键转折点
    - 每个情节点包含：名称、描述、所在章节范围、重要性
    - 确保情节点的分布合理，避免出现故事中后期情节稀释或节奏拖累)
-5. **反派规划**（重要！必须包含）：
-   - 反派的真实身份和表面身份的对比
-   - 反派的核心动机（为什么认为自己是对的）
-   - 反派的能力和威胁程度（要与主角对等，不能是弱鸡）
-   - 反派的成长弧线（从弱到强，或从隐藏到暴露）
-   - 反派与主角的关键对抗节点（至少3个主要冲突）
+5. **核心冲突与核心对立面规划**（重要！必须包含）：
+   - 冲突的核心性质（理念分歧、生存资源、信息不对称等，而非简单的善恶对立）
+   - 持不同理念者/对立面的核心动机（为什么他们认为自己是对的）
+   - 对立面的能力和威胁程度（要与主角方形成有效制衡）
+   - 核心冲突如何随着情节推进而演变、升级
+   - 关键理念对抗节点（至少3个主要冲突爆发点）
 6. **章节规划** (要求：
+   - 【关键指令】你必须精确生成恰好 {chapter_count} 个章节规划！不能多也不能少。
    - 每章包含：章节标题、章节梗概、关键事件列表、涉及角色、预计字数
    - 章节梗概应具体到本章的行为驱动（不仅是发生了什么，还有为什么发生）
-   - 关键事件应包含 3-5 个具体的冲突点或情感转折点
+   - 关键事件应包含 3-4 个具体的冲突点或情感转折点
+   - 【严格角色出场逻辑】**绝对不要**为了让所有角色露脸而强行把他们塞进章节中！每一章的 `characters_involved` 只能包含那些**真正在本章节推动了核心剧情**的角色。如果某人的出场不符合当前的剧情推理逻辑，就不要写他。
    - 确保每一章都有明确的叙事任务，严禁出现"为了填充字数"的平淡章节)
 
 以JSON格式输出，结构如下：
@@ -58,6 +115,7 @@ OUTLINE_GENERATION_PROMPT = """请根据以下信息创建一个完整的小说�
 {{
   "summary": "故事简介",
   "theme": "主题思想",
+  "core_concepts": "核心概念与世界观设定",
   "setting": "故事背景",
   "plot_points": [
     {{
@@ -96,6 +154,37 @@ OUTLINE_REFINEMENT_PROMPT = """请优化和完善以下小说大纲：
 4. 如果涉及重大改动，请说明理由
 """
 
+PRELIMINARY_OUTLINE_REFINEMENT_PROMPT = """请优化和完善以下小说的初级大纲：
+
+**当前初级大纲**:
+{current_outline}
+
+**用户反馈**:
+{user_feedback}
+
+请根据用户反馈调整初级大纲，保持JSON格式输出，仅构建世界观和故事主轴，无需细化章节。注意：
+1. 保持故事的整体连贯性
+2. 确保修改后的情节合理
+3. 保持原有结构：故事简介、主题、世界观、主要情节点等。
+
+以JSON格式输出，结构如下：
+```json
+{{
+  "summary": "故事简介",
+  "theme": "主题思想",
+  "setting": "故事背景",
+  "plot_points": [
+    {{
+      "name": "情节点名称",
+      "description": "详细描述",
+      "chapter_range": "第X-Y章",
+      "importance": "高"
+    }}
+  ]
+}}
+```
+"""
+
 CHAPTER_EXPANSION_PROMPT = """请为第{chapter_number}章生成更详细的规划：
 
 **章节基本信息**:
@@ -117,7 +206,7 @@ CHAPTER_EXPANSION_PROMPT = """请为第{chapter_number}章生成更详细的规�
 
 请扩展这一章的规划，包括：
 1. 更详细的章节梗概 (200字左右)
-2. 具体的场景列表 (3-5个场景)
+2. 具体的场景列表 (3-5个场景)。**【严格场景逻辑】**每个场景中的 `characters` 只能包含真正在该物理空间或通讯链路中推动剧情发展的人。绝不要让无关角色强行登场，只写情节推理需要的角色。
 3. 每个场景的要点
 4. 关键对话或动作描写提示
 5. 本章的情感基调
@@ -157,39 +246,56 @@ def get_outline_generation_prompt(
     chapter_count: int = 20,
     words_per_chapter: int = None,
     user_requirements: str = "",
-    character_info: str = ""
+    character_info: str = "",
+    preliminary_outline_content: str = "",
+    core_concepts: str = ""
 ) -> str:
     from ..config.settings import Settings
     if words_per_chapter is None:
         words_per_chapter = Settings().default_chapter_words
-    """
-    获取大纲生成prompt
 
-    Args:
-        title: 小说标题
-        genre: 类型
-        theme: 主题
-        chapter_count: 章节数
-        words_per_chapter: 每章字数
-        user_requirements: 用户额外需求
-        character_info: 角色设定信息（包含角色名、性格、背景等）
-
-    Returns:
-        str: 格式化的prompt
-    """
-    return OUTLINE_GENERATION_PROMPT.format(
+    prompt = OUTLINE_GENERATION_PROMPT.format(
         title=title,
         genre=genre,
         theme=theme,
+        core_concepts=core_concepts if core_concepts else "无特殊限制，基于主题自由发挥",
         chapter_count=chapter_count,
         words_per_chapter=words_per_chapter,
-        user_requirements=user_requirements or "无特殊要求",
-        character_info=character_info or "暂无角色设定，将根据故事需要自动安排角色"
+        user_requirements=f"用户额外要求: {user_requirements}" if user_requirements else "无特殊要求",
+        character_info=f"预设角色:\n{character_info}" if character_info else "暂无角色设定，将根据故事需要自动安排角色",
+        preliminary_outline_content=preliminary_outline_content if preliminary_outline_content else "无预设主干，请自行构建"
     )
+    return prompt
+
+def get_preliminary_outline_generation_prompt(
+    title: str,
+    genre: str,
+    theme: str,
+    core_concepts: str = "",
+    chapter_count: int = 20,
+    user_requirements: str = ""
+) -> str:
+    from ..config.settings import Settings
+    prompt = PRELIMINARY_OUTLINE_GENERATION_PROMPT.format(
+        title=title,
+        genre=genre,
+        theme=theme,
+        core_concepts=core_concepts if core_concepts else "无特殊限制，基于主题自由发挥",
+        chapter_count=chapter_count,
+        user_requirements=f"用户额外要求: {user_requirements}" if user_requirements else "无特殊要求"
+    )
+    return prompt
 
 def get_outline_refinement_prompt(current_outline: str, user_feedback: str) -> str:
     """获取大纲优化prompt"""
     return OUTLINE_REFINEMENT_PROMPT.format(
+        current_outline=current_outline,
+        user_feedback=user_feedback
+    )
+
+def get_preliminary_outline_refinement_prompt(current_outline: str, user_feedback: str) -> str:
+    """获取初级大纲优化prompt"""
+    return PRELIMINARY_OUTLINE_REFINEMENT_PROMPT.format(
         current_outline=current_outline,
         user_feedback=user_feedback
     )

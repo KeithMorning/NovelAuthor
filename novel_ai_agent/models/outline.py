@@ -48,17 +48,15 @@ class ChapterPlan(BaseModel):
     detailed_plan: Optional[DetailedChapterPlan] = Field(None, description="详细章节规划")
 
 
-class Outline(BaseModel):
-    """大纲模型"""
-
+class PreliminaryOutline(BaseModel):
+    """初级大纲模型"""
     title: str = Field(..., description="小说标题")
     genre: str = Field(..., description="类型: 武侠/科幻/推理等")
     summary: str = Field(..., description="故事简介")
     theme: str = Field(..., description="主题思想")
+    core_concepts: str = Field("", description="核心科幻概念与世界观设定支撑（高级参数）")
     setting: Optional[str] = Field(None, description="故事背景设定")
     plot_points: List[PlotPoint] = Field(default_factory=list, description="主要情节点")
-    chapters_plan: List[ChapterPlan] = Field(default_factory=list, description="章节规划")
-    target_words: Optional[int] = Field(None, description="目标总字数")
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
     version: int = Field(1, description="大纲版本号")
@@ -74,6 +72,46 @@ class Outline(BaseModel):
 
         md += "## 主题\n\n"
         md += f"{self.theme}\n\n"
+
+        if self.setting:
+            md += "## 故事背景\n\n"
+            md += f"{self.setting}\n\n"
+
+        if self.plot_points:
+            md += "## 主要情节点\n\n"
+            for i, point in enumerate(self.plot_points, 1):
+                md += f"### {i}. {point.name}\n\n"
+                md += f"**位置**: {point.chapter_range}\n\n"
+                md += f"**重要性**: {point.importance}\n\n"
+                md += f"**描述**: {point.description}\n\n"
+
+        md += f"**创建时间**: {self.created_at.strftime('%Y-%m-%d %H:%M:%S')}\n"
+        md += f"**最后更新**: {self.updated_at.strftime('%Y-%m-%d %H:%M:%S')}\n"
+
+        return md
+
+
+class Outline(PreliminaryOutline):
+    """大纲模型 (详细大纲)"""
+
+    chapters_plan: List[ChapterPlan] = Field(default_factory=list, description="章节规划")
+    target_words: Optional[int] = Field(None, description="目标总字数")
+
+    def to_markdown(self) -> str:
+        """转换为Markdown格式"""
+        md = f"# {self.title} - 故事大纲\n\n"
+        md += f"**类型**: {self.genre}\n\n"
+        md += f"**版本**: v{self.version}\n\n"
+
+        md += "## 故事简介\n\n"
+        md += f"{self.summary}\n\n"
+
+        md += "## 主题\n\n"
+        md += f"{self.theme}\n\n"
+
+        if getattr(self, "core_concepts", ""):
+            md += "## 核心概念与设定（高级属性）\n\n"
+            md += f"{self.core_concepts}\n\n"
 
         if self.setting:
             md += "## 故事背景\n\n"

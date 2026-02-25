@@ -90,7 +90,7 @@ class WritingContext:
 
         for char in self.characters:
             lines.append(f"\n{char.name} ({char.role})")
-            lines.append(f"  性格: {char.personality}")
+            lines.append(f"  核心特质与矛盾: {char.core_contradiction}")
             lines.append(f"  背景: {char.background}")
             if char.appearance:
                 lines.append(f"  外貌: {char.appearance}")

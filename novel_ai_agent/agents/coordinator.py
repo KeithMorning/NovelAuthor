@@ -99,10 +99,12 @@ class CoordinatorAgent(BaseAgent):
         genre: str,
         theme: str,
         style: str = "中性风格",
+        core_concepts: str = "",
         chapter_count: int = 20,
         user_requirements: str = "",
         novel_id: Optional[str] = None,
-        progress_callback: Optional[Callable] = None
+        progress_callback: Optional[Callable] = None,
+        interactive_callback: Optional[Callable] = None
     ) -> Dict[str, Any]:
         """
         完整的小说创建工作流
@@ -161,91 +163,131 @@ class CoordinatorAgent(BaseAgent):
                 }
             )
 
-            # 2. 先生成角色（在大纲之前，以便大纲可以使用角色名）
-            logger.step_start(
-                WorkflowStep.CHARACTER_GENERATION,
-                "开始生成角色"
-            )
-            await _notify("角色生成", "start", f"正在生成角色设定...")
-
+            self.outline_agent = OutlineAgent()
             self.character_agent = CharacterAgent()
-            # 先生成角色，不需要outline（因为还没有）
-            char_result = await self.character_agent.generate_characters(
-                outline=None,
-                chapter_count=chapter_count,
-                title=title,
-                genre=genre,
-                theme=theme,
-                user_requirements=user_requirements
-            )
 
-            if char_result["status"] != "success":
-                logger.step_error(
-                    WorkflowStep.CHARACTER_GENERATION,
-                    "角色生成失败",
-                    Exception(char_result.get("message", "Unknown error")),
-                    details=char_result
-                )
-                await _notify("角色生成", "error", f"角色生成失败: {char_result.get('message', '')}")
-                return char_result
+            # 2. 生成初级大纲
+            logger.step_start(WorkflowStep.OUTLINE_GENERATION, "开始生成初级大纲")
+            await _notify("初级大纲生成", "start", "正在构建世界观和主线脉络...")
+            
+            preliminary_outline = None
+            current_requirements = user_requirements
+            is_first_outline = True
+            while True:
+                if is_first_outline:
+                    outline_result = await self.outline_agent.generate_preliminary_outline(
+                        title=title, genre=genre, theme=theme, core_concepts=core_concepts,
+                        chapter_count=chapter_count, user_requirements=current_requirements
+                    )
+                    is_first_outline = False
+                else:
+                    outline_result = await self.outline_agent.refine_preliminary_outline(
+                        current_outline=preliminary_outline,
+                        user_feedback=current_requirements
+                    )
 
-            # 保存角色到novel对象（临时存储，用于后续生成大纲）
-            temp_characters = char_result["characters"]
-            for character in temp_characters:
+                if outline_result["status"] != "success":
+                    logger.step_error(WorkflowStep.OUTLINE_GENERATION, "初级大纲生成/优化失败", Exception(outline_result.get("message", "")), outline_result)
+                    await _notify("初级大纲生成", "error", f"初级大纲失败: {outline_result.get('message', '')}")
+                    return outline_result
+                
+                preliminary_outline = outline_result["outline"]
+                await _notify("初级大纲生成", "done", "初级大纲完成")
+                logger.step_success(WorkflowStep.OUTLINE_GENERATION, "初级大纲处理成功")
+                
+                if interactive_callback:
+                    feedback = await interactive_callback("preliminary_outline", preliminary_outline)
+                    if feedback and feedback.strip().lower() != 'y':
+                        current_requirements = feedback
+                        await _notify("初级大纲生成", "start", "根据反馈重新优化初级大纲...")
+                        continue
+                break
+
+            # 3. 基于初级大纲生成角色
+            logger.step_start(WorkflowStep.CHARACTER_GENERATION, "开始基于初级大纲生成角色")
+            await _notify("角色生成", "start", "正在基于世界观生成核心角色...")
+            
+            characters = []
+            char_requirements = ""
+            is_first_character = True
+            story_context_for_char = preliminary_outline.summary if preliminary_outline else ""
+            
+            while True:
+                if is_first_character:
+                    char_result = await self.character_agent.generate_characters(
+                        outline=preliminary_outline,
+                        chapter_count=chapter_count,
+                        title=title, genre=genre, theme=theme,
+                        user_requirements=char_requirements
+                    )
+                    is_first_character = False
+                else:
+                    char_result = await self.character_agent.refine_characters(
+                        characters=characters,
+                        refinement_requirements=char_requirements,
+                        story_context=story_context_for_char
+                    )
+
+                if char_result["status"] != "success":
+                    logger.step_error(WorkflowStep.CHARACTER_GENERATION, "角色生成/优化失败", Exception(char_result.get("message", "")), char_result)
+                    await _notify("角色生成", "error", f"角色失败: {char_result.get('message', '')}")
+                    return char_result
+
+                characters = char_result["characters"]
+                await _notify("角色生成", "done", f"角色完成，共 {len(characters)} 个角色")
+                logger.step_success(WorkflowStep.CHARACTER_GENERATION, f"角色处理成功")
+                
+                if interactive_callback:
+                    feedback = await interactive_callback("characters", characters)
+                    if feedback and feedback.strip().lower() != 'y':
+                        char_requirements = feedback
+                        await _notify("角色生成", "start", "根据反馈优化角色...")
+                        continue
+                break
+
+            for character in characters:
                 novel.add_character(character)
 
-            logger.step_success(
-                WorkflowStep.CHARACTER_GENERATION,
-                f"角色生成成功，创建了 {len(novel.characters)} 个角色",
-                details={
-                    "character_count": len(novel.characters),
-                    "characters": [char.name for char in novel.characters]
-                }
-            )
-            await _notify("角色生成", "done", f"角色生成完成，共 {len(novel.characters)} 个角色")
-
-            # 3. 生成大纲（使用已创建的角色信息）
-            logger.step_start(
-                WorkflowStep.OUTLINE_GENERATION,
-                f"开始生成大纲，目标章节数: {chapter_count}"
-            )
-            await _notify("大纲生成", "start", f"正在生成 {chapter_count} 章大纲...")
-
-            self.outline_agent = OutlineAgent()
-
-            # 格式化角色信息传递给大纲生成
+            # 4. 生成详细大纲（带章节规划）
+            logger.step_start(WorkflowStep.OUTLINE_GENERATION, f"开始生成详细大纲，目标章节数: {chapter_count}")
+            await _notify("详细大纲生成", "start", f"正在生成 {chapter_count} 章详细大纲...")
+            
             character_info = _format_character_info_for_outline(novel.characters)
+            detailed_requirements = ""
+            is_first_detailed = True
+            
+            while True:
+                if is_first_detailed:
+                    detailed_result = await self.outline_agent.generate_detailed_outline(
+                        title=title, genre=genre, theme=theme, chapter_count=chapter_count,
+                        user_requirements=detailed_requirements,
+                        character_info=character_info,
+                        preliminary_outline_content=preliminary_outline.to_markdown(),
+                        core_concepts=core_concepts
+                    )
+                    is_first_detailed = False
+                else:
+                    detailed_result = await self.outline_agent.refine_outline(
+                        current_outline=novel.outline,
+                        user_feedback=detailed_requirements
+                    )
 
-            outline_result = await self.outline_agent.generate_outline(
-                title=title,
-                genre=genre,
-                theme=theme,
-                chapter_count=chapter_count,
-                user_requirements=user_requirements,
-                character_info=character_info
-            )
-
-            if outline_result["status"] != "success":
-                logger.step_error(
-                    WorkflowStep.OUTLINE_GENERATION,
-                    "大纲生成失败",
-                    Exception(outline_result.get("message", "Unknown error")),
-                    details=outline_result
-                )
-                await _notify("大纲生成", "error", f"大纲生成失败: {outline_result.get('message', '')}")
-                return outline_result
-
-            novel.outline = outline_result["outline"]
-
-            logger.step_success(
-                WorkflowStep.OUTLINE_GENERATION,
-                f"大纲生成成功，包含 {len(novel.outline.chapters_plan)} 章",
-                details={
-                    "chapter_count": len(novel.outline.chapters_plan),
-                    "plot_points": len(novel.outline.plot_points)
-                }
-            )
-            await _notify("大纲生成", "done", f"大纲生成完成，包含 {len(novel.outline.chapters_plan)} 章")
+                if detailed_result["status"] != "success":
+                    logger.step_error(WorkflowStep.OUTLINE_GENERATION, "详细大纲生成/优化失败", Exception(detailed_result.get("message", "")), detailed_result)
+                    await _notify("详细大纲生成", "error", f"详细大纲失败: {detailed_result.get('message', '')}")
+                    return detailed_result
+                
+                novel.outline = detailed_result["outline"]
+                await _notify("详细大纲生成", "done", f"详细大纲完成，包含 {len(novel.outline.chapters_plan)} 章")
+                logger.step_success(WorkflowStep.OUTLINE_GENERATION, f"详细大纲处理成功")
+                
+                if interactive_callback:
+                    feedback = await interactive_callback("detailed_outline", novel.outline)
+                    if feedback and feedback.strip().lower() != 'y':
+                        detailed_requirements = feedback
+                        await _notify("详细大纲生成", "start", "根据反馈优化详细大纲...")
+                        continue
+                break
 
             # 4. 保存小说
             logger.step_start(
@@ -525,11 +567,12 @@ class CoordinatorAgent(BaseAgent):
 
             # 3. 检查是否需要细化章节规划
             if enable_expansion and not chapter_plan.detailed_plan:
-                self.logger.log(
-                    level=LogLevel.INFO,
-                    step=WorkflowStep.CHAPTER_WRITING,
-                    message=f"正在细化第{chapter_number}章的规划..."
-                )
+                if not on_token:
+                    self.logger.log(
+                        level=LogLevel.INFO,
+                        step=WorkflowStep.CHAPTER_WRITING,
+                        message=f"正在细化第{chapter_number}章的规划..."
+                    )
                 
                 # 构建故事上下文
                 story_context = {
@@ -566,17 +609,19 @@ class CoordinatorAgent(BaseAgent):
                     chapter_plan.detailed_plan = expand_result["detailed_plan"]
                     # 保存细化后的规划
                     file_manager.save_novel_json(novel)
-                    self.logger.log(
-                        level=LogLevel.SUCCESS,
-                        step=WorkflowStep.CHAPTER_WRITING,
-                        message=f"第{chapter_number}章规划细化完成"
-                    )
+                    if not on_token:
+                        self.logger.log(
+                            level=LogLevel.SUCCESS,
+                            step=WorkflowStep.CHAPTER_WRITING,
+                            message=f"第{chapter_number}章规划细化完成"
+                        )
                 else:
-                    self.logger.log(
-                        level=LogLevel.WARNING,
-                        step=WorkflowStep.CHAPTER_WRITING,
-                        message=f"细化章节规划失败，将使用原始规划: {expand_result.get('message')}"
-                    )
+                    if not on_token:
+                        self.logger.log(
+                            level=LogLevel.WARNING,
+                            step=WorkflowStep.CHAPTER_WRITING,
+                            message=f"细化章节规划失败，将使用原始规划: {expand_result.get('message')}"
+                        )
 
             # 5. 创作章节
             self.writer_agent = WriterAgent(style_name=novel.author_style)
@@ -828,9 +873,15 @@ def _format_character_info_for_outline(characters) -> str:
 
     info_parts = []
     for char in characters:
-        part = f"- {char.name}（{char.role}）: {char.personality[:50] if char.personality else '暂无描述'}..."
+        part = f"【{char.name}】 ({char.role})\n"
+        if char.core_contradiction:
+            part += f"- 核心矛盾: {char.core_contradiction}\n"
+        if hasattr(char, 'deep_desire') and char.deep_desire:
+            part += f"- 深层渴望: {char.deep_desire}\n"
+        if hasattr(char, 'life_filter') and char.life_filter:
+            part += f"- 行为滤镜: {char.life_filter}\n"
         if hasattr(char, 'quirk') and char.quirk:
-            part += f" 个人怪癖: {char.quirk}"
+            part += f"- 个人怪癖: {char.quirk}\n"
         info_parts.append(part)
 
-    return "\n".join(info_parts)
+    return "\n\n".join(info_parts)

@@ -3,13 +3,14 @@
 负责章节润色、一致性检查、逻辑审查等编辑工作
 """
 import json
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Callable
 from langchain_core.messages import HumanMessage, SystemMessage
 from .base_agent import BaseAgent
 from ..models.chapter import Chapter
 from ..models.character import Character
 from ..models.outline import Outline
 from ..utils.json_parser import extract_json_from_response
+from ..config.styles import get_style
 from ..prompts.editor_prompts import (
     EDITOR_SYSTEM_PROMPT,
     get_polish_prompt,
@@ -71,6 +72,7 @@ class EditorAgent(BaseAgent):
         style: str,
         focus_areas: Optional[List[str]] = None,
         user_requirements: str = "",
+        on_token: Optional[Callable[[str], None]] = None,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -86,10 +88,17 @@ class EditorAgent(BaseAgent):
             Dict: 包含润色后的章节
         """
         try:
+            full_style_prompt = style
+            try:
+                style_obj = get_style(style)
+                full_style_prompt = f"{style}\n{style_obj.prompt_template}"
+            except KeyError:
+                pass
+
             # 构建prompt
             user_prompt = get_polish_prompt(
                 content=chapter.content,
-                style=style,
+                style=full_style_prompt,
                 focus_areas=focus_areas,
                 user_requirements=user_requirements
             )
@@ -100,7 +109,12 @@ class EditorAgent(BaseAgent):
                 HumanMessage(content=user_prompt)
             ]
 
-            polished_content = await self._stream_invoke(self.llm, messages)
+            polished_content = await self._stream_invoke(self.llm, messages, on_token=on_token)
+
+            # 清理生成的文本，防止带有重复的大标题 (如 `# 第1章 XXX`)
+            import re
+            polished_content = re.sub(r'^\s*#{1,2}\s*第[0-9一二三四五六七八九十百]+[章节].*?\n+', '', polished_content, count=1, flags=re.MULTILINE)
+            polished_content = polished_content.lstrip()
 
             # 创建新版本的章节（使用 model_copy 保留伏笔等结构化数据）
             polished_chapter = chapter.model_copy(update={
@@ -279,9 +293,16 @@ class EditorAgent(BaseAgent):
                 previous_context = self._format_previous_context(previous_chapters)
 
             # 构建prompt
+            full_style_prompt = style
+            try:
+                style_obj = get_style(style)
+                full_style_prompt = f"{style}\n{style_obj.prompt_template}"
+            except KeyError:
+                pass
+
             user_prompt = get_comprehensive_review_prompt(
                 content=chapter.content,
-                style=style,
+                style=full_style_prompt,
                 characters=characters_info,
                 outline_summary=outline_summary,
                 previous_context=previous_context,
@@ -376,8 +397,9 @@ class EditorAgent(BaseAgent):
         lines = []
         for char in characters:
             lines.append(f"**{char.name}** ({char.role})")
-            lines.append(f"性格: {char.personality}")
-            lines.append(f"背景: {char.background}")
+            lines.append(f"核心特质与矛盾: {char.core_contradiction}")
+            lines.append(f"深层渴望: {char.deep_desire}")
+            lines.append(f"人生滤镜: {char.life_filter}")
             if char.relationships:
                 lines.append(f"关系: {char.relationships}")
             lines.append("")

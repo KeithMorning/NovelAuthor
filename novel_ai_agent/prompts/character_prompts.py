@@ -36,9 +36,18 @@ CHARACTER_GENERATION_PROMPT = """请根据以下小说信息创建角色设定�
 **角色需求**:
 {character_requirements}
 
+**【关键】避免好莱坞式角色设计 - 严格禁止！**
+
+❌ 禁止主角光环：主角不是伟光正代表，主角可以自私、懦弱、会犯错
+❌ 禁止完美受害者：受害者角色不需要凄苦背景来博同情
+❌ 禁止单维度反派：反派不是傻白甜，反派有自己的理念和逻辑
+❌ 禁止英雄救美俗套：不是为了英雄救美而救美
+❌ 禁止理想化配角：配角不需要完美，可以有缺陷、有私心
+❌ 禁止脸谱化人物：不要贴标签，人物是复杂的
+
 **【关键】避免AI痕迹的角色设计要求**：
 
-1. **去范式化**：不要使用"理想主义主角+务实恋人+激进反抗领袖+保守体制派+工具人黑客"这种经典角色库组合。角色应该在某些方面符合类型预期，但在某些方面"不按牌理出牌"。
+1. **去范式化与非二元对立**：不要使用"理想主义主角+务实恋人+激进反抗领袖+绝对反派"这种经典受限组合。特别是在硬科幻（如刘慈欣风格）中，通常没有绝对意义上的坏人，只有立场、信仰、生存策略的不同。角色之间的冲突应该源于理念的碰撞和信息不对称，而不是简单的善恶对立。
 
 2. **性格矛盾**：避免"勇敢就全程勇敢，善良就全程善良"的扁平角色。角色可以同时有让人喜欢的优点和让人皱眉的缺点，可以在不同情境下表现不一致。
 
@@ -54,28 +63,28 @@ CHARACTER_GENERATION_PROMPT = """请根据以下小说信息创建角色设定�
 对于每个角色，需要包含：
 1. **基本信息**:
    - name: 角色名字
-   - role: 角色定位 (主角/重要配角/配角/反派等)
+   - role: 角色定位 (如：观察者/破壁人/理念执行者/历史见证者等，不要拘泥于"反派"或"主角")
 
-2. **性格特征**:
-   - personality: 性格描述 (50-100字，要具体且有矛盾性)
+2. **核心特质与矛盾**:
+   - core_contradiction: 核心特质与隐藏矛盾 (50-100字，不要单纯堆砌形容词。描述角色在压力下的习惯反应，以及外在表现与内心真实的矛盾点)
 
-3. **背景故事**:
-   - background: 背景经历 (100-150字)
+3. **动机渴望**:
+   - deep_desire: 表层目标与深层渴望 (他自认为要做什么，以及他灵魂深处真正缺失的渴望)
 
-4. **动机目标**:
-   - motivation: 行动动机和最终目标
+4. **人生滤镜**:
+   - life_filter: 人生滤镜/背景故事 (50-100字，不要只写履历，要写决定性事件如何改变了他现在看待世界的方式)
 
 5. **外貌描写**:
-   - appearance: 外貌特征 (可选，50字左右)
+   - appearance: 外貌特征 (可选，50字左右，最好能反映角色的经历或特质)
 
 6. **特殊能力**:
    - skills: 特长、技能或特殊能力 (如适用)
 
 7. **人物关系**:
-   - relationships: 与其他角色的关系 (对象格式)
+   - relationships: 与其他角色的关系 (对象格式，描述具体的互动动态而不仅仅是标签)
 
 8. **发展弧线**:
-   - arc: 角色在故事中的成长变化
+   - arc: 角色在故事中的成长变化或执念深化
 
 JSON格式示例：
 ```json
@@ -84,16 +93,16 @@ JSON格式示例：
     {{
       "name": "角色名",
       "role": "主角",
-      "personality": "性格描述，支持多行文本。",
-      "background": "背景故事，支持多行文本。",
-      "motivation": "行动动机和目标",
-      "appearance": "外貌特征",
+      "core_contradiction": "核心特质与隐藏矛盾描述...",
+      "deep_desire": "表层目标与深层渴望...",
+      "life_filter": "决定性的人生滤镜与背景...",
+      "appearance": "外貌特征...",
       "skills": "特长、技能",
       "relationships": {{
-        "角色2": "关系描述",
-        "角色3": "关系描述"
+        "角色2": "具体互动与关系动态",
+        "角色3": "具体互动与关系动态"
       }},
-      "arc": "角色发展弧线"
+      "arc": "角色发展的弧线"
     }}
   ]
 }}
@@ -126,10 +135,10 @@ CHARACTER_REFINEMENT_PROMPT = """请完善以下角色设定：
 ```json
 {{
   "name": "角色名",
-  "role": "角色定位",
-  "personality": "性格描述",
-  "background": "背景故事",
-  "motivation": "行动动机",
+  "role": "角色定位(如：理念执行者/破壁人等，避免非黑即白的善恶标签)",
+  "core_contradiction": "核心特质与隐藏矛盾描述",
+  "deep_desire": "表层目标与深层渴望",
+  "life_filter": "决定性的人生滤镜与背景",
   "appearance": "外貌特征",
   "skills": "特长技能",
   "relationships": {{
@@ -140,6 +149,42 @@ CHARACTER_REFINEMENT_PROMPT = """请完善以下角色设定：
 ```
 
 注意：只输出JSON，不要输出其他内容。保留原角色中未涉及修改的字段不变。所有内容必须使用纯中文，禁止夹杂英文。
+"""
+
+BULK_CHARACTER_REFINEMENT_PROMPT = """请根据用户反馈批量优化和修改以下角色设定：
+
+**当前角色列表**:
+{current_characters}
+
+**用户修改意见**:
+{refinement_requirements}
+
+**故事上下文 (世界观与主线)**:
+{story_context}
+
+请根据修改意见整体调整现有角色（如果不满意可修、可删、可增）。
+必须以JSON格式输出优化后的完整角色列表，格式如下：
+```json
+{{
+  "characters": [
+    {{
+      "name": "角色名",
+      "role": "角色定位(如：理念执行者/破壁人等，避免非黑即白的善恶标签)",
+      "core_contradiction": "核心特质与隐藏矛盾描述",
+      "deep_desire": "表层目标与深层渴望",
+      "life_filter": "决定性的人生滤镜与背景",
+      "appearance": "外貌特征",
+      "skills": "特长技能",
+      "relationships": {{
+        "角色名": "关系描述"
+      }},
+      "arc": "发展弧线"
+    }}
+  ]
+}}
+```
+
+注意：只输出JSON，不要输出其他内容。所有内容必须使用纯中文，禁止夹杂英文。
 """
 
 CHARACTER_RELATIONSHIP_PROMPT = """请为以下角色构建关系网络：
@@ -170,10 +215,10 @@ def _get_character_count_guide(chapter_count: int) -> str:
         str: 角色数量建议文本
     """
     if chapter_count <= 5:
-        min_chars, max_chars = 3, 5
+        min_chars, max_chars = 1, 5
         desc = "短篇小说，角色精简"
     elif chapter_count <= 12:
-        min_chars, max_chars = 5, 8
+        min_chars, max_chars = 3, 7
         desc = "中篇小说，需要足够的配角来支撑多条情节线"
     elif chapter_count <= 20:
         min_chars, max_chars = 7, 12
@@ -214,7 +259,7 @@ def _get_naming_constraints(genre: str) -> str:
 - 角色命名规则：至少一半用纯中文名，少量的可以用外国名字
 - 纯中文名字两到三个字，鼓励三个字的
 - 纯中文名字要用有寓意的字，名字必须要现代化
-- AI系统/超级计算机禁止用人类神名，可以用普罗米修斯，可以参考现代AI模型命名（如：GPT、Claude、Gemini、Llama、Mistral、智普、DeepSeek、MinMax）
+- AI系统/超级计算机禁止用人类神名，推荐用 E.L.M.A，可以参考现代AI模型命名（如：GPT、Claude、Gemini、Llama、Mistral、智普、DeepSeek、MinMax）
 - 禁止用"阿X"这种格式的名字
 - 名字要有辨识度，让人一眼能记住"""
 
@@ -288,6 +333,18 @@ def get_character_refinement_prompt(
     """获取角色完善prompt"""
     return CHARACTER_REFINEMENT_PROMPT.format(
         current_character=current_character,
+        refinement_requirements=refinement_requirements,
+        story_context=story_context
+    )
+
+def get_bulk_character_refinement_prompt(
+    current_characters: str,
+    refinement_requirements: str,
+    story_context: str
+) -> str:
+    """获取批量角色完善prompt"""
+    return BULK_CHARACTER_REFINEMENT_PROMPT.format(
+        current_characters=current_characters,
         refinement_requirements=refinement_requirements,
         story_context=story_context
     )

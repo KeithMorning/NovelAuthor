@@ -85,13 +85,29 @@ class MemoryManager:
         }
 
 
-# 全局记忆管理器缓存
+# 全局记忆管理器缓存（仅缓存小说级别的章节记忆，不缓存对话历史）
 _memory_managers: Dict[str, MemoryManager] = {}
 
 
 def get_memory_manager(novel_id: str) -> MemoryManager:
-    """获取或创建指定小说的记忆管理器"""
+    """
+    获取或创建指定小说的记忆管理器。
+    每次 chat 会话开始时，应调用 reset_conversation() 清除对话历史。
+    """
     if novel_id not in _memory_managers:
+        _memory_managers[novel_id] = MemoryManager(novel_id)
+    return _memory_managers[novel_id]
+
+
+def new_session_memory_manager(novel_id: str) -> MemoryManager:
+    """
+    为新的 chat 会话创建一个全新的记忆管理器（清除旧对话历史）。
+    保留对话无关的章节记忆（recent_chapters 等）。
+    """
+    if novel_id in _memory_managers:
+        # 只清除对话历史，保留章节缓存
+        _memory_managers[novel_id].short_term_memory["conversation_history"] = []
+    else:
         _memory_managers[novel_id] = MemoryManager(novel_id)
     return _memory_managers[novel_id]
 

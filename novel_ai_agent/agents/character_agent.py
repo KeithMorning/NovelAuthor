@@ -11,7 +11,8 @@ from ..models.outline import Outline
 from ..prompts.character_prompts import (
     CHARACTER_SYSTEM_PROMPT,
     get_character_generation_prompt,
-    get_character_refinement_prompt
+    get_character_refinement_prompt,
+    get_bulk_character_refinement_prompt
 )
 from ..utils.json_parser import extract_json_from_response
 from ..utils.logger import get_logger, WorkflowStep, LogLevel
@@ -53,6 +54,8 @@ class CharacterAgent(BaseAgent):
             return await self.generate_characters(**kwargs)
         elif action == "refine":
             return await self.refine_character(**kwargs)
+        elif action == "refine_characters":
+            return await self.refine_characters(**kwargs)
         else:
             return {"status": "error", "message": f"未知操作: {action}"}
 
@@ -292,6 +295,103 @@ class CharacterAgent(BaseAgent):
                 "error": str(e)
             }
 
+    async def refine_characters(
+        self,
+        characters: List[Character],
+        refinement_requirements: str,
+        story_context: str = "",
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        批量完善角色设定
+
+        Args:
+            characters: 当前角色列表
+            refinement_requirements: 完善/修改要求
+            story_context: 故事大纲上下文
+
+        Returns:
+            Dict: 包含完善后的Character列表
+        """
+        try:
+            # 将当前角色列表转为JSON字符串
+            current_characters_str = json.dumps(
+                [char.model_dump() for char in characters],
+                ensure_ascii=False,
+                indent=2
+            )
+
+            # 构建prompt
+            user_prompt = get_bulk_character_refinement_prompt(
+                current_characters=current_characters_str,
+                refinement_requirements=refinement_requirements,
+                story_context=story_context
+            )
+
+            # 调用LLM
+            messages = [
+                SystemMessage(content=CHARACTER_SYSTEM_PROMPT),
+                HumanMessage(content=user_prompt)
+            ]
+
+            json_llm = self._get_json_llm()
+            # 批量生成，响应可能较长
+            json_llm = json_llm.bind(max_tokens=8192)
+
+            self.logger.log(
+                level=LogLevel.INFO,
+                step=WorkflowStep.CHARACTER_GENERATION,
+                message="开始调用API批量修改角色..."
+            )
+
+            content = await self._stream_invoke(json_llm, messages)
+
+            try:
+                characters_data = extract_json_from_response(content, "debug_bulk_character_refinement")
+            except Exception as parse_err:
+                self.logger.log(
+                    level=LogLevel.ERROR,
+                    step=WorkflowStep.CHARACTER_GENERATION,
+                    message=f"JSON解析失败: {parse_err}"
+                )
+                raise
+
+            if isinstance(characters_data, dict):
+                if "characters" in characters_data:
+                    characters_data = characters_data["characters"]
+                else:
+                    characters_data = [characters_data]
+
+            refined_characters = []
+            for char_data in characters_data:
+                if "relationships" in char_data:
+                    rel = char_data["relationships"]
+                    if isinstance(rel, str):
+                        new_rel = {}
+                        for line in rel.strip().split("\n"):
+                            if ":" in line:
+                                key, value = line.split(":", 1)
+                                new_rel[key.strip()] = value.strip()
+                        char_data["relationships"] = new_rel
+                    elif not isinstance(rel, dict):
+                        char_data["relationships"] = {}
+
+                refined_characters.append(Character(**char_data))
+
+            return {
+                "status": "success",
+                "characters": refined_characters,
+                "count": len(refined_characters),
+                "raw_response": content
+            }
+
+        except Exception as e:
+            return {
+                "status": "error",
+                "message": f"批量修改角色时出错: {str(e)}",
+                "error": str(e)
+            }
+
     def _extract_outline_key_points(self, outline: Outline) -> str:
         """
         提取大纲的关键信息
@@ -332,7 +432,7 @@ class CharacterAgent(BaseAgent):
         """
         lines = []
         for char in characters:
-            lines.append(f"- {char.name} ({char.role}): {char.personality[:50]}...")
+            lines.append(f"- {char.name} ({char.role}): {char.core_contradiction[:50]}...")
         return "\n".join(lines)
 
     def get_character_by_name(self, characters: List[Character], name: str) -> Character:

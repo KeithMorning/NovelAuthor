@@ -4,7 +4,7 @@
 """
 import re
 import json
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Callable
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from .base_agent import BaseAgent
 from .writer_agent import WriterAgent
@@ -13,9 +13,22 @@ from .outline_agent import OutlineAgent
 from .character_agent import CharacterAgent
 from ..models.novel import Novel
 from ..models.chapter import Chapter
-from ..memory import get_memory_manager
+from ..memory import get_memory_manager, new_session_memory_manager
 from ..utils.file_manager import file_manager
-from ..prompts.dialogue_prompts import get_dialogue_system_prompt
+from ..prompts.dialogue_prompts import get_dialogue_system_prompt, get_planning_prompt
+
+
+# 触发计划模式的关键词（用户输入中只要包含其中一个就自动进入计划模式）
+_PLANNING_KEYWORDS = {
+    "先计划", "先想想", "先分析", "先规划", "计划一下", "先梳理",
+    "模拟情节", "模拟一下", "推演", "先看看怎么", "先评估",
+    "设计一下", "先评估一下", "先了解一下", "分析一下"
+}
+
+
+def is_planning_request(text: str) -> bool:
+    """検查用户输入是否是计划模式请求"""
+    return any(kw in text for kw in _PLANNING_KEYWORDS)
 
 
 class DialogueAgent(BaseAgent):
@@ -35,7 +48,8 @@ class DialogueAgent(BaseAgent):
             description="负责与用户对话，理解和执行修改需求"
         )
         self.novel_id = novel_id
-        self.memory_manager = get_memory_manager(novel_id)
+        # 每次 DialogueAgent 初始化 = 新的 chat 会话，清除旧对话历史
+        self.memory_manager = new_session_memory_manager(novel_id)
         self.conversation_history: List[Dict] = []
 
     async def execute(self, **kwargs) -> Dict[str, Any]:
@@ -105,11 +119,16 @@ class DialogueAgent(BaseAgent):
             try:
                 parsed = json.loads(response_content)
                 ai_response = parsed.get("response", response_content)
-                action = parsed.get("action")
+                actions = parsed.get("actions", [])
+                
+                # 向后兼容：如果大模型还是返回了单数形式的 action
+                if "action" in parsed and parsed["action"] is not None and not actions:
+                    actions = [parsed["action"]]
+
             except json.JSONDecodeError:
                 # JSON解析失败，回退到原始响应
                 ai_response = response_content
-                action = None
+                actions = []
 
             # 添加AI回复到历史
             self.conversation_history.append({
@@ -123,7 +142,7 @@ class DialogueAgent(BaseAgent):
             return {
                 "status": "success",
                 "response": ai_response,
-                "action": action,
+                "actions": actions,
                 "conversation_length": len(self.conversation_history)
             }
 
@@ -160,11 +179,11 @@ class DialogueAgent(BaseAgent):
                 lines.append(f"\n当前角色列表（共{len(novel.characters)}个）：")
                 for char in novel.characters:
                     lines.append(f"\n【{char.name}】（{char.role}）")
-                    lines.append(f"  性格：{char.personality}")
-                    if char.background:
-                        lines.append(f"  背景：{char.background}")
-                    if char.motivation:
-                        lines.append(f"  动机：{char.motivation}")
+                    lines.append(f"  核心特质与矛盾：{char.core_contradiction}")
+                    if char.deep_desire:
+                        lines.append(f"  深层渴望：{char.deep_desire}")
+                    if char.life_filter:
+                        lines.append(f"  人生滤镜：{char.life_filter}")
                     if char.arc:
                         lines.append(f"  发展弧线：{char.arc}")
                     if char.quirk:
@@ -183,6 +202,113 @@ class DialogueAgent(BaseAgent):
             lines.append(f"\n最近章节：{len(context['recent_chapters'])}章")
 
         return "\n".join(lines)
+
+    async def make_plan(
+        self,
+        user_input: str,
+        context: Optional[Dict] = None
+    ) -> Dict[str, Any]:
+        """
+        计划模式：分析现有剧情，制定详细修改方案，不执行任何操作。
+
+        Args:
+            user_input: 用户的修改需求
+            context: 上下文（包含 novel 对象）
+
+        Returns:
+            Dict: {
+                "status": "success",
+                "plan_text": 分析和计划的纯文本,
+                "proposed_actions": 建议执行的 action 列表（供用户确认后使用）,
+                "chapter_num": 目标章节号（如果检测到）
+            }
+        """
+        try:
+            novel = context.get("novel") if context else None
+            novel_id = context.get("novel_id") if context else self.novel_id
+
+            # ── 1. 从用户输入中提取目标章节号 ──────────────────
+            ch_match = re.search(r'第\s*(\d+)\s*[章节]', user_input)
+            chapter_num = int(ch_match.group(1)) if ch_match else None
+
+            # ── 2. 加载章节内容 ──────────────────────────────────
+            chapter_obj = None
+            if novel and chapter_num:
+                for ch in (novel.chapters or []):
+                    if ch.number == chapter_num:
+                        chapter_obj = ch
+                        break
+
+            if not chapter_obj and chapter_num:
+                # 也尝试从 context 里获取当前章节
+                if context and "current_chapter" in context:
+                    cc = context["current_chapter"]
+                    if cc.get("number") == chapter_num:
+                        chapter_num = cc["number"]
+
+            # 没有找到章节内容时给出提示
+            if chapter_obj:
+                chapter_content = chapter_obj.content or ""
+                chapter_title = chapter_obj.title or f"第{chapter_num}章"
+            else:
+                # 用大纲摘要代替
+                chapter_title = f"第{chapter_num}章" if chapter_num else "（未指定章节）"
+                chapter_content = ""
+                if novel and novel.outline and novel.outline.chapters_plan:
+                    for cp in novel.outline.chapters_plan:
+                        if cp.chapter_number == chapter_num:
+                            chapter_content = f"[大纲描述]\n{cp.summary or ''}"
+                            chapter_title = cp.title or chapter_title
+                            break
+
+            # ── 3. 构建小说背景信息 ──────────────────────────────
+            novel_ctx_lines = []
+            if novel:
+                novel_ctx_lines.append(f"小说：{novel.title}（{novel.genre}）")
+                if novel.outline:
+                    novel_ctx_lines.append(f"主题：{novel.outline.theme}")
+                    novel_ctx_lines.append(f"摘要：{novel.outline.summary[:300]}")
+                if novel.characters:
+                    novel_ctx_lines.append("\n主要角色：")
+                    for c in novel.characters[:5]:
+                        novel_ctx_lines.append(f"  - {c.name}（{c.role}）：{c.core_contradiction[:60]}")
+            novel_context_str = "\n".join(novel_ctx_lines)
+
+            # ── 4. 调用 LLM 生成计划（纯文本）──────────────────
+            planning_prompt = get_planning_prompt(
+                user_request=user_input,
+                chapter_num=chapter_num or 0,
+                chapter_title=chapter_title,
+                chapter_content=chapter_content,
+                novel_context=novel_context_str
+            )
+            messages = [HumanMessage(content=planning_prompt)]
+            plan_text = await self._stream_invoke(self.llm, messages)
+
+            # ── 5. 同步推断 proposed_actions（供确认后执行）──────
+            # 优先用 fast_route 从 user_input 提取 action
+            proposed_actions = self.fast_route(user_input)
+            if not proposed_actions and chapter_num:
+                # fallback: 通用修改章节 action
+                proposed_actions = [{
+                    "tool": "revise_chapter",
+                    "params": {"chapter_number": chapter_num, "requirements": user_input},
+                    "reason": f"根据计划修改第{chapter_num}章"
+                }]
+
+            return {
+                "status": "success",
+                "plan_text": plan_text,
+                "proposed_actions": proposed_actions or [],
+                "chapter_num": chapter_num
+            }
+
+        except Exception as e:
+            return {
+                "status": "error",
+                "message": f"计划生成出错: {str(e)}",
+                "error": str(e)
+            }
 
     async def execute_revision(
         self,
@@ -254,16 +380,62 @@ class DialogueAgent(BaseAgent):
     def clear_history(self):
         """清空对话历史"""
         self.conversation_history.clear()
+        self.memory_manager.short_term_memory["conversation_history"] = []
 
     def get_history(self) -> List[Dict]:
         """获取完整对话历史"""
         return self.conversation_history.copy()
 
-    def fast_route(self, user_input: str) -> Optional[Dict[str, Any]]:
+    def save_session(self) -> Optional[str]:
+        """
+        将当前对话历史保存到磁盘（用于 /resume）。
+        Returns: 保存的文件路径，失败返回 None
+        """
+        try:
+            import os, json
+            from datetime import datetime
+            sessions_dir = os.path.join(
+                file_manager.settings.output_dir, self.novel_id, "sessions"
+            )
+            os.makedirs(sessions_dir, exist_ok=True)
+            path = os.path.join(sessions_dir, "last_session.json")
+            data = {
+                "novel_id": self.novel_id,
+                "saved_at": datetime.now().isoformat(),
+                "conversation_history": self.conversation_history
+            }
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            return path
+        except Exception as e:
+            return None
+
+    def load_session(self) -> int:
+        """
+        从磁盘加载上一次的对话历史（用于 /resume）。
+        Returns: 恢复的对话轮次数，0 表示没有历史或失败
+        """
+        try:
+            import os, json
+            path = os.path.join(
+                file_manager.settings.output_dir, self.novel_id, "sessions", "last_session.json"
+            )
+            if not os.path.exists(path):
+                return 0
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            self.conversation_history = data.get("conversation_history", [])
+            # 同步到 memory_manager
+            self.memory_manager.short_term_memory["conversation_history"] = self.conversation_history.copy()
+            return len(self.conversation_history)
+        except Exception:
+            return 0
+
+    def fast_route(self, user_input: str) -> Optional[List[Dict[str, Any]]]:
         """
         基于规则的快速意图路由，零 LLM 调用。
 
-        命中常见指令模式时直接返回 action dict；
+        命中常见指令模式时直接返回 actions 数组；
         无法识别时返回 None，由调用方降级到 LLM 解析。
 
         支持的模式:
@@ -278,56 +450,99 @@ class DialogueAgent(BaseAgent):
         # ── 细化章节 ──────────────────────────────────────────
         m = re.search(r'(?:细化|展开|扩展|详细规划)[第\s]*(\d+)[章节]', text)
         if m:
-            return {
+            return [{
                 "tool": "expand_chapter",
                 "params": {"chapter_number": int(m.group(1))},
                 "reason": f"用户要求细化第{m.group(1)}章"
-            }
+            }]
 
         # ── 润色章节 ──────────────────────────────────────────
         m = re.search(r'润色[第\s]*(\d+)[章节]', text)
         if m:
-            return {
+            return [{
                 "tool": "polish_chapter",
                 "params": {"chapter_number": int(m.group(1))},
                 "reason": f"用户要求润色第{m.group(1)}章"
-            }
+            }]
+
+        # ── 局部编辑章节（Edit Instruction 快速模式）──────────
+        m = re.search(r'(?:局部修改|微调|补充|插入|增加|删除)[第\s]*(\d+)[章节][，,。\s]*(.+)?', text)
+        if m:
+            ch_num = int(m.group(1))
+            req = (m.group(2) or text).strip()
+            return [{
+                "tool": "edit_chapter",
+                "params": {"chapter_number": ch_num, "requirements": req},
+                "reason": f"用户要求局部编辑第{ch_num}章"
+            }]
 
         # ── 修改/重写章节（可带要求）──────────────────────────
         m = re.search(r'(?:修改|重写|改写|重新写)[第\s]*(\d+)[章节][，,。\s]*(.+)?', text)
         if m:
             ch_num = int(m.group(1))
             req = (m.group(2) or text).strip()
-            return {
+            return [{
                 "tool": "revise_chapter",
                 "params": {"chapter_number": ch_num, "requirements": req},
                 "reason": f"用户要求修改第{ch_num}章"
-            }
+            }]
+
+        # ── 创作新章节 ────────────────────────────────────────
+        m = re.search(r'(?:开始写|写|创作)[第\s]*(\d+)[章节]', text)
+        if m:
+            ch_num = int(m.group(1))
+            return [{
+                "tool": "write_chapter",
+                "params": {"chapter_number": ch_num},
+                "reason": f"用户要求创作第{ch_num}章"
+            }]
 
         # ── 修改大纲 ──────────────────────────────────────────
         if re.search(r'(?:修改|调整|改|更新|优化)(?:一下|下)?大纲', text):
-            return {
+            return [{
                 "tool": "modify_outline",
                 "params": {"feedback": text},
                 "reason": "用户要求修改大纲"
-            }
+            }]
 
         # ── 修改角色（尝试提取角色名）────────────────────────
         m = re.search(r'(?:修改|调整|改)[一下]?角色[：:\s]*([^\s，,的]+)', text)
         if m:
             char_name = m.group(1)
-            return {
+            return [{
                 "tool": "modify_character",
                 "params": {"character_name": char_name, "modifications": text},
                 "reason": f"用户要求修改角色 {char_name}"
-            }
+            }]
         # 不含具体名字的角色修改
         if re.search(r'(?:修改|调整|改)[一下]?(?:角色|人物)', text):
-            return {
+            return [{
                 "tool": "modify_character",
                 "params": {"modifications": text},
                 "reason": "用户要求修改角色"
-            }
+            }]
+
+        # ── 本地精确替换 ──────────────────────────────────────────
+        m = re.search(r'(?:把|将)[第\s]*(\d+)[章节]的[\"\'“‘](.*?)[\"\'”’]替换为[\"\'“‘](.*?)[\"\'”’]', text)
+        if m:
+            ch_num = int(m.group(1))
+            search_t = m.group(2)
+            replace_t = m.group(3)
+            return [{
+                "tool": "local_replace_text",
+                "params": {"chapter_number": ch_num, "search_text": search_t, "replace_text": replace_t},
+                "reason": f"快速指令触发：将第{ch_num}章的 '{search_t}' 替换为 '{replace_t}'"
+            }]
+
+        # ── 同步章节 ──────────────────────────────────────────
+        m = re.search(r'(?:同步|更新|读取)[第\s]*(\d+)[章节]', text)
+        if m:
+            ch_num = int(m.group(1))
+            return [{
+                "tool": "sync_chapter",
+                "params": {"chapter_number": ch_num},
+                "reason": f"用户要求同步第{ch_num}章的手动修改"
+            }]
 
         # ── 未命中任何规则 ────────────────────────────────────
         return None
@@ -335,7 +550,8 @@ class DialogueAgent(BaseAgent):
     async def execute_action(
         self,
         action: Dict[str, Any],
-        context: Dict[str, Any]
+        context: Dict[str, Any],
+        on_token: Optional[Callable[[str], None]] = None
     ) -> Dict[str, Any]:
         """
         执行识别出的动作
@@ -364,7 +580,30 @@ class DialogueAgent(BaseAgent):
         if not novel:
             return {"status": "error", "message": f"未找到小说 {novel_id}"}
 
-        if tool_name == "expand_chapter":
+        if tool_name == "write_chapter":
+            # 创作全新章节
+            chapter_num = params.get("chapter_number")
+            if not chapter_num:
+                return {"status": "error", "message": "未指定章节号"}
+                
+            from .coordinator import CoordinatorAgent
+            coordinator = CoordinatorAgent()
+            
+            # 使用 CoordinatorAgent 的工作流来创作单章
+            result = await coordinator.write_chapter_workflow(
+                novel_id=novel_id,
+                chapter_number=chapter_num,
+                enable_expansion=True,
+                force=True,
+                on_token=on_token
+            )
+            
+            if result.get("status") == "success":
+                result["message"] = f"第{chapter_num}章创作完成"
+                
+            return result
+
+        elif tool_name == "expand_chapter":
             # 章节细化
             chapter_num = params.get("chapter_number")
             if not chapter_num:
@@ -415,9 +654,9 @@ class DialogueAgent(BaseAgent):
 
                     char_lines.append(
                         f"- {c.name}（{c.role}）\n"
-                        f"  性格: {c.personality}\n"
-                        f"  背景: {c.background}\n"
-                        f"  动机: {c.motivation}"
+                        f"  核心特质与矛盾: {c.core_contradiction}\n"
+                        f"  深层渴望: {c.deep_desire}\n"
+                        f"  人生滤镜(背景): {c.life_filter}"
                         f"{appearance_str}{skills_str}{arc_str}{quirk_str}\n"
                         f"  关系: {rel_str}"
                     )
@@ -482,7 +721,7 @@ class DialogueAgent(BaseAgent):
                 if novel.characters:
                     char_lines = []
                     for c in novel.characters:
-                        char_lines.append(f"- {c.name}（{c.role}）: 性格={c.personality}, 背景={c.background}")
+                        char_lines.append(f"- {c.name}（{c.role}）: 核心矛盾={c.core_contradiction}, 人生滤镜={c.life_filter}")
                     current_chars_desc = "\n".join(char_lines)
 
                 combined_requirements = (
@@ -516,7 +755,7 @@ class DialogueAgent(BaseAgent):
             if novel.characters:
                 char_lines = []
                 for c in novel.characters:
-                    char_lines.append(f"- {c.name}（{c.role}）: 性格={c.personality}, 背景={c.background}, 关系={c.relationships}")
+                    char_lines.append(f"- {c.name}（{c.role}）: 核心矛盾={c.core_contradiction}, 人生滤镜={c.life_filter}, 关系={c.relationships}")
                 current_chars_desc = "\n".join(char_lines)
 
             combined_requirements = (
@@ -543,6 +782,87 @@ class DialogueAgent(BaseAgent):
 
             return result
 
+        elif tool_name == "edit_chapter":
+            # 局部编辑章节（Edit Instruction 快速模式）
+            chapter_num = params.get("chapter_number")
+            if not chapter_num:
+                return {"status": "error", "message": "未指定章节号"}
+
+            chapter = None
+            for ch in novel.chapters or []:
+                if ch.number == chapter_num:
+                    chapter = ch
+                    break
+
+            if not chapter:
+                return {"status": "error", "message": f"未找到第{chapter_num}章的内容"}
+
+            writer = WriterAgent(style_name=novel.author_style)
+            result = await writer.edit_chapter(
+                chapter=chapter,
+                revision_requirements=params.get("requirements", reason),
+                on_token=on_token
+            )
+
+            if result.get("status") == "success":
+                edited_ch = result.get("chapter")
+                novel.chapters = [
+                    edited_ch if c.number == chapter_num else c
+                    for c in (novel.chapters or [])
+                ]
+                file_manager.save_novel_json(novel)
+                file_manager.save_chapter_markdown(edited_ch, novel_id)
+                file_manager.save_novel_markdown(novel)
+                mode = "局部编辑" if result.get("mode") == "edit_instruction" else "全文重写"
+                result["message"] = (
+                    f"第{chapter_num}章已{mode}并保存"
+                    f"（v{edited_ch.version}，{edited_ch.word_count}字）"
+                )
+
+            return result
+
+        elif tool_name == "local_replace_text":
+            # 纯本地文本精确替换（不调用大模型）
+            chapter_num = params.get("chapter_number")
+            search_text = params.get("search_text")
+            replace_text = params.get("replace_text")
+
+            if not chapter_num or not search_text or replace_text is None:
+                return {"status": "error", "message": "缺少必要的替换参数 (chapter_number, search_text, replace_text)"}
+
+            # 找到对应章节
+            chapter = None
+            for ch in novel.chapters or []:
+                if ch.number == chapter_num:
+                    chapter = ch
+                    break
+
+            if not chapter:
+                return {"status": "error", "message": f"未找到第{chapter_num}章的内容"}
+                
+            if search_text not in chapter.content:
+                return {"status": "error", "message": f"在第{chapter_num}章中未找到要替换的内容：'{search_text}'"}
+
+            # 执行替换计数
+            count = chapter.content.count(search_text)
+            
+            # 字符串替换
+            chapter.content = chapter.content.replace(search_text, replace_text)
+            
+            # 保存回文件
+            novel.chapters = [
+                chapter if c.number == chapter_num else c
+                for c in (novel.chapters or [])
+            ]
+            file_manager.save_novel_json(novel)
+            file_manager.save_chapter_markdown(chapter, novel_id)
+            file_manager.save_novel_markdown(novel)
+            
+            return {
+                "status": "success",
+                "message": f"成功在第{chapter_num}章将 '{search_text}' 替换为 '{replace_text}'，共替换了 {count} 处。"
+            }
+
         elif tool_name == "revise_chapter":
             # 章节修改
             chapter_num = params.get("chapter_number")
@@ -563,7 +883,8 @@ class DialogueAgent(BaseAgent):
             result = await writer.revise_chapter(
                 chapter=chapter,
                 revision_requirements=params.get("requirements", reason),
-                context=""
+                context="",
+                on_token=on_token
             )
 
             if result.get("status") == "success":
@@ -574,6 +895,7 @@ class DialogueAgent(BaseAgent):
                 ]
                 file_manager.save_novel_json(novel)
                 file_manager.save_chapter_markdown(revised_ch, novel_id)
+                file_manager.save_novel_markdown(novel)
                 result["message"] = (
                     f"第{chapter_num}章已修改并保存"
                     f"（v{revised_ch.version}，{revised_ch.word_count}字）"
@@ -601,7 +923,8 @@ class DialogueAgent(BaseAgent):
             result = await editor.polish_chapter(
                 chapter=chapter,
                 style=novel.author_style,
-                focus_areas=None
+                focus_areas=None,
+                on_token=on_token
             )
 
             if result.get("status") == "success":
@@ -612,11 +935,29 @@ class DialogueAgent(BaseAgent):
                 ]
                 file_manager.save_novel_json(novel)
                 file_manager.save_chapter_markdown(polished_ch, novel_id)
+                file_manager.save_novel_markdown(novel)
                 result["message"] = (
                     f"第{chapter_num}章已润色并保存"
                     f"（v{polished_ch.version}，{polished_ch.word_count}字）"
                 )
 
             return result
+
+        elif tool_name == "sync_chapter":
+            chapter_num = params.get("chapter_number")
+            if not chapter_num:
+                return {"status": "error", "message": "未指定需要同步的章节号"}
+                
+            success = file_manager.sync_chapter_markdown_to_json(novel_id, chapter_num)
+            if success:
+                return {
+                    "status": "success",
+                    "message": f"成功将第 {chapter_num} 章的 Markdown 修改同步到了系统中！"
+                }
+            else:
+                return {
+                    "status": "error",
+                    "message": f"同步第 {chapter_num} 章失败，请检查文件是否存在或格式是否正确。"
+                }
 
         return {"status": "error", "message": f"未知工具: {tool_name}"}

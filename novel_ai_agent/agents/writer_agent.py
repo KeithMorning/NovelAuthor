@@ -15,7 +15,10 @@ from ..utils.json_parser import extract_json_from_response
 from ..prompts.writing_prompts import (
     get_writing_system_prompt,
     get_chapter_writing_prompt,
-    get_chapter_revision_prompt
+    get_chapter_revision_prompt,
+    get_chapter_edit_prompt,
+    apply_edits,
+    get_chapter_edit_system_prompt
 )
 from ..utils.logger import get_logger, WorkflowStep, LogLevel
 
@@ -184,6 +187,12 @@ class WriterAgent(BaseAgent):
                 message=f"章节写作完成: 第{chapter_plan.chapter_number}章, 输入~{input_tokens_estimate}, 输出~{output_tokens_estimate}, 内容长度{len(content)}"
             )
 
+            # 清理生成的文本，防止带有重复的大标题 (如 `# 第1章 XXX`)
+            import re
+            # 匹配以 1-2个 # 开头，跟着 "第X章" 的行，并移除
+            content = re.sub(r'^\s*#{1,2}\s*第[0-9一二三四五六七八九十百]+[章节].*?\n+', '', content, count=1, flags=re.MULTILINE)
+            content = content.lstrip()
+
             # 创建Chapter对象
             chapter = Chapter(
                 number=chapter_plan.chapter_number,
@@ -271,6 +280,11 @@ class WriterAgent(BaseAgent):
                 on_token=on_token
             )
 
+            # 清理生成的文本，防止带有重复的大标题 (如 `# 第1章 XXX`)
+            import re
+            new_content = re.sub(r'^\s*#{1,2}\s*第[0-9一二三四五六七八九十百]+[章节].*?\n+', '', new_content, count=1, flags=re.MULTILINE)
+            new_content = new_content.lstrip()
+
             # 创建新版本的Chapter（使用 model_copy 保留伏笔等结构化数据）
             revised_chapter = chapter.model_copy(update={
                 "content": new_content,
@@ -296,6 +310,119 @@ class WriterAgent(BaseAgent):
                 "message": f"修改章节时出错: {str(e)}",
                 "error": str(e)
             }
+
+    async def edit_chapter(
+        self,
+        chapter: Chapter,
+        revision_requirements: str,
+        on_token: Optional[Callable[[str], None]] = None,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        局部编辑章节（Edit Instruction 模式）。
+
+        相比 revise_chapter 全文重写，此方法只输出编辑指令 JSON，
+        由 apply_edits() 在本地将 patch 应用到原文，大幅减少 LLM 输出 token。
+
+        若 LLM 判断修改量过大（summary 含 FULL_REWRITE），自动降级到 revise_chapter。
+        """
+        try:
+            # 构建 prompt
+            system_prompt = get_chapter_edit_system_prompt(self.style.prompt_template)
+            user_prompt = get_chapter_edit_prompt(
+                original_content=chapter.content or "",
+                revision_requirements=revision_requirements
+            )
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_prompt)
+            ]
+
+            # 调用 JSON 模式 LLM（输出量远少于全文重写）
+            json_llm = self._get_json_llm()
+            raw = await self._stream_invoke(json_llm, messages, on_token=on_token)
+
+            # 解析 JSON
+            raw_stripped = raw.strip()
+            if raw_stripped.startswith("```"):
+                parts = raw_stripped.split("```")
+                raw_stripped = parts[1][4:] if parts[1].startswith("json") else parts[1]
+            import json as _json
+            try:
+                parsed = _json.loads(raw_stripped.strip())
+            except Exception as e:
+                return {"status": "error", "message": f"解析局部修改 JSON 失败: {e}\nRaw={raw_stripped[:100]}"}
+
+            summary = parsed.get("summary", "")
+
+            # LLM 主动提示需要全文重写
+            if "FULL_REWRITE_NEEDED" in summary.upper() or "FULL_REWRITE" in summary.upper():
+                return await self.revise_chapter(
+                    chapter=chapter,
+                    revision_requirements=revision_requirements,
+                    context="（EditInstruction 降级为全文重写）",
+                    on_token=on_token
+                )
+
+            edits = parsed.get("edits", [])
+            if not edits:
+                return {
+                    "status": "error", 
+                    "message": "AI 未能生成任何有效的局部修改指令。可能是Prompt施加了过多约束，或者它认为不需要修改。",
+                    "raw_response": raw_stripped
+                }
+
+            new_content, failed = apply_edits(chapter.content or "", edits)
+
+            # 打印调试信息到日志
+            self.logger.log(
+                level=LogLevel.INFO,
+                step=WorkflowStep.CHAPTER_WRITING,
+                message=f"edit_chapter raw: {raw_stripped}\nFailed edits: {failed}"
+            )
+
+            # 如果超过一半的指令未命中，也降级
+            if len(failed) > len(edits) / 2:
+                self.logger.log(
+                    level=LogLevel.WARNING,
+                    step=WorkflowStep.CHAPTER_WRITING,
+                    message=f"edit_chapter anchor 命中率过低 ({len(failed)}/{len(edits)} failed)，开始降级。Failed: {failed}"
+                )
+                return await self.revise_chapter(
+                    chapter=chapter,
+                    revision_requirements=revision_requirements,
+                    context="（EditInstruction anchor 命中率过低，降级为全文重写）",
+                    on_token=on_token
+                )
+
+            # 创建新版 Chapter
+            edited_chapter = chapter.model_copy(update={
+                "content": new_content,
+                "status": ChapterStatus.REVIEWED,
+                "version": chapter.version + 1,
+                "notes": f"局部编辑: {revision_requirements[:60]}",
+                "updated_at": datetime.now()
+            })
+            edited_chapter.update_word_count()
+
+            return {
+                "status": "success",
+                "chapter": edited_chapter,
+                "word_count": edited_chapter.word_count,
+                "version": edited_chapter.version,
+                "edit_count": len(edits),
+                "failed_edits": failed,
+                "mode": "edit_instruction"
+            }
+
+        except Exception as e:
+            # 任何异常都降级到 revise_chapter
+            return await self.revise_chapter(
+                chapter=chapter,
+                revision_requirements=revision_requirements,
+                context=f"（EditInstruction 解析失败 {e}，降级为全文重写）",
+                on_token=on_token
+            )
 
     async def _extract_chapter_digest(
         self,
@@ -387,6 +514,10 @@ class WriterAgent(BaseAgent):
         background = []
         background.append(f"**故事简介**: {outline.summary}")
         background.append(f"**主题**: {outline.theme}")
+        
+        if getattr(outline, "core_concepts", ""):
+            background.append(f"**核心概念与设定（强制物理法则/世界观约束）**:\n{outline.core_concepts}")
+            
         if outline.setting:
             background.append(f"**背景设定**: {outline.setting}")
         return "\n".join(background)
@@ -410,9 +541,9 @@ class WriterAgent(BaseAgent):
         info_lines = []
         for char in involved_chars:
             info_lines.append(f"**{char.name}** ({char.role})")
-            info_lines.append(f"- 性格: {char.personality}")
-            info_lines.append(f"- 背景: {char.background}")
-            info_lines.append(f"- 动机: {char.motivation}")
+            info_lines.append(f"- 核心特质与矛盾: {char.core_contradiction}")
+            info_lines.append(f"- 深层渴望: {char.deep_desire}")
+            info_lines.append(f"- 人生滤镜(背景): {char.life_filter}")
             if char.skills:
                 info_lines.append(f"- 技能: {char.skills}")
             if char.quirk:

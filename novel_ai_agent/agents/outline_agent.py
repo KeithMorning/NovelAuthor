@@ -6,12 +6,14 @@ import json
 from typing import Dict, Any, Optional
 from langchain_core.messages import HumanMessage, SystemMessage
 from .base_agent import BaseAgent
-from ..models.outline import Outline, PlotPoint, ChapterPlan, DetailedChapterPlan
+from ..models.outline import Outline, PlotPoint, ChapterPlan, DetailedChapterPlan, PreliminaryOutline
 from ..utils.json_parser import extract_json_from_response
 from ..prompts.outline_prompts import (
     OUTLINE_SYSTEM_PROMPT,
     get_outline_generation_prompt,
+    get_preliminary_outline_generation_prompt,
     get_outline_refinement_prompt,
+    get_preliminary_outline_refinement_prompt,
     get_chapter_expansion_prompt
 )
 from ..config.settings import Settings
@@ -46,12 +48,16 @@ class OutlineAgent(BaseAgent):
         Returns:
             Dict: 包含任务结果
         """
-        action = kwargs.get("action", "generate")
+        action = kwargs.get("action", "generate_preliminary")
 
-        if action == "generate":
-            return await self.generate_outline(**kwargs)
+        if action == "generate_preliminary":
+            return await self.generate_preliminary_outline(**kwargs)
+        elif action == "generate_detailed":
+            return await self.generate_detailed_outline(**kwargs)
         elif action == "refine":
             return await self.refine_outline(**kwargs)
+        elif action == "refine_preliminary":
+            return await self.refine_preliminary_outline(**kwargs)
         elif action == "expand":
             return await self.expand_chapter_plan(**kwargs)
         else:
@@ -165,7 +171,64 @@ class OutlineAgent(BaseAgent):
                 "error": str(e)
             }
 
-    async def generate_outline(
+    async def generate_preliminary_outline(
+        self,
+        title: str,
+        genre: str,
+        theme: str,
+        core_concepts: str = "",
+        chapter_count: int = 20,
+        user_requirements: str = "",
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        生成初级故事大纲（无章节细化）
+        """
+        try:
+            # 构建prompt
+            user_prompt = get_preliminary_outline_generation_prompt(
+                title=title,
+                genre=genre,
+                theme=theme,
+                core_concepts=core_concepts,
+                chapter_count=chapter_count,
+                user_requirements=user_requirements
+            )
+
+            # 调用LLM（使用 JSON Output Mode）
+            json_llm = self._get_json_llm()
+            messages = [
+                SystemMessage(content=OUTLINE_SYSTEM_PROMPT),
+                HumanMessage(content=user_prompt)
+            ]
+
+            content = await self._stream_invoke(json_llm, messages)
+
+            # 解析JSON响应
+            outline_data = extract_json_from_response(content, "debug_preliminary_outline")
+
+            # 构建Outline对象（chapters_plan 为空）
+            outline = self._build_outline_from_data(
+                outline_data,
+                title=title,
+                genre=genre,
+                core_concepts=core_concepts
+            )
+
+            return {
+                "status": "success",
+                "outline": outline,
+                "raw_response": content
+            }
+
+        except Exception as e:
+            return {
+                "status": "error",
+                "message": f"生成初级大纲时出错: {str(e)}",
+                "error": str(e)
+            }
+
+    async def generate_detailed_outline(
         self,
         title: str,
         genre: str,
@@ -174,10 +237,12 @@ class OutlineAgent(BaseAgent):
         words_per_chapter: int = Settings().default_chapter_words,
         user_requirements: str = "",
         character_info: str = "",
+        preliminary_outline_content: str = "",
+        core_concepts: str = "",
         **kwargs
     ) -> Dict[str, Any]:
         """
-        生成小说大纲
+        生成详细小说大纲（包含章节规划）
 
         Args:
             title: 小说标题
@@ -200,7 +265,9 @@ class OutlineAgent(BaseAgent):
                 chapter_count=chapter_count,
                 words_per_chapter=words_per_chapter,
                 user_requirements=user_requirements,
-                character_info=character_info
+                character_info=character_info,
+                preliminary_outline_content=preliminary_outline_content,
+                core_concepts=core_concepts
             )
 
             # 调用LLM（使用 JSON Output Mode）
@@ -219,7 +286,8 @@ class OutlineAgent(BaseAgent):
             outline = self._build_outline_from_data(
                 outline_data,
                 title=title,
-                genre=genre
+                genre=genre,
+                core_concepts=core_concepts
             )
 
             return {
@@ -368,12 +436,74 @@ class OutlineAgent(BaseAgent):
                 "error": str(e)
             }
 
+    async def refine_preliminary_outline(
+        self,
+        current_outline: PreliminaryOutline,
+        user_feedback: str,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        优化完善初级大纲
+
+        Args:
+            current_outline: 当前初级大纲
+            user_feedback: 用户反馈
+
+        Returns:
+            Dict: 包含优化后的Outline对象(初级大纲部分)
+        """
+        try:
+            # 将当前大纲转为JSON字符串
+            current_outline_str = current_outline.model_dump_json(indent=2, ensure_ascii=False)
+
+            # 构建prompt
+            user_prompt = get_preliminary_outline_refinement_prompt(
+                current_outline=current_outline_str,
+                user_feedback=user_feedback
+            )
+
+            # 调用LLM（使用 JSON Output Mode）
+            json_llm = self._get_json_llm()
+
+            messages = [
+                SystemMessage(content=OUTLINE_SYSTEM_PROMPT),
+                HumanMessage(content=user_prompt)
+            ]
+
+            content = await self._stream_invoke(json_llm, messages)
+
+            # 解析JSON响应
+            outline_data = extract_json_from_response(content, "debug_preliminary_outline")
+
+            # 构建新的Outline对象，版本号+1
+            outline = self._build_outline_from_data(
+                outline_data,
+                title=current_outline.title,
+                genre=current_outline.genre,
+                version=current_outline.version + 1
+            )
+
+            return {
+                "status": "success",
+                "outline": outline,
+                "raw_response": content,
+                "changes": "初级大纲已根据反馈更新"
+            }
+
+        except Exception as e:
+            return {
+                "status": "error",
+                "message": f"优化初级大纲时出错: {str(e)}",
+                "error": str(e)
+            }
+
     def _build_outline_from_data(
         self,
-        data: Dict,
+        data: Dict[str, Any],
         title: str,
         genre: str,
-        version: int = 1
+        version: int = 1,
+        core_concepts: str = ""
     ) -> Outline:
         """
         从字典数据构建Outline对象
@@ -383,6 +513,7 @@ class OutlineAgent(BaseAgent):
             title: 标题
             genre: 类型
             version: 版本号
+            core_concepts: 外部传入的核心设定（原样保留）
 
         Returns:
             Outline: 大纲对象
@@ -406,6 +537,7 @@ class OutlineAgent(BaseAgent):
             genre=genre,
             summary=data.get("summary", ""),
             theme=data.get("theme", ""),
+            core_concepts=core_concepts or data.get("core_concepts", ""),
             setting=data.get("setting"),
             plot_points=plot_points,
             chapters_plan=chapters_plan,

@@ -116,6 +116,81 @@ class FileManager:
         filepath.write_text(chapter.to_markdown(include_metadata=True), encoding="utf-8")
         return str(filepath)
 
+    def sync_chapter_markdown_to_json(self, novel_id: str, chapter_number: int) -> bool:
+        """
+        读取用户手动修改过的 Markdown 章节文件，同步回 novel.json。
+        
+        Args:
+            novel_id: 小说 ID
+            chapter_number: 章节号
+            
+        Returns:
+            bool: 同步是否成功
+        """
+        try:
+            novel = self.load_novel_json(novel_id)
+            if not novel:
+                print(f"找不到小说 {novel_id}")
+                return False
+                
+            dirs = self._novel_dirs(novel_id)
+            md_path = dirs["novels"] / f"{novel_id}_chapter_{chapter_number:03d}.md"
+            
+            if not md_path.exists():
+                print(f"找不到 markdown 文件: {md_path}")
+                return False
+                
+            content = md_path.read_text(encoding="utf-8")
+            
+            # 解析 md 内容：去掉由 to_markdown(include_metadata=True) 生成的头部
+            # 格式大致是：
+            # ## 第X章 标题\n\n
+            # > **状态**... \n\n
+            # ---\n\n
+            # (正文开始)
+            parts = content.split("---\n\n", 1)
+            if len(parts) == 2:
+                # 存在分隔符，取下半部分作为纯正文
+                pure_content = parts[1].strip()
+            else:
+                # 如果用户把分隔符删了，做兼容处理：尝试去掉以 ## 章节开头的行
+                lines = content.split('\n')
+                body_lines = []
+                in_header = True
+                for line in lines:
+                    if in_header and (line.startswith('##') or line.startswith('>')):
+                        continue
+                    in_header = False
+                    body_lines.append(line)
+                pure_content = '\n'.join(body_lines).strip()
+                
+            # 更新 novel 对象
+            chapter_found = False
+            for ch in (novel.chapters or []):
+                if ch.number == chapter_number:
+                    # 如果内容没变，直接返回成功可省写磁盘
+                    if ch.content.strip() == pure_content:
+                        return True
+                    ch.content = pure_content
+                    ch.update_word_count()
+                    ch.updated_at = datetime.now()
+                    ch.version += 1
+                    chapter_found = True
+                    break
+                    
+            if not chapter_found:
+                print(f"在 JSON 中未找到第 {chapter_number} 章")
+                return False
+                
+            # 保存更新后的 JSON
+            self.save_novel_json(novel)
+            # 同步更新整个小说聚合的 markdown
+            self.save_novel_markdown(novel)
+            return True
+        except Exception as e:
+            print(f"同步章节 markdown 到 JSON 时出错: {e}")
+            return False
+
     def export_novel_with_version(self, novel: Novel) -> str:
         """导出带时间戳版本的小说备份"""
         dirs = self._novel_dirs(novel.id)

@@ -108,6 +108,7 @@ CHAPTER_WRITING_PROMPT = """请创作以下章节：
 6. **时长一致性**: 如果涉及角色生命倒计时、技能冷却等有时间限制的设定，必须与前文保持一致！
 7. **角色关系约束**: 本章涉及的角色必须与前文关系一致！不能出现两个陌生人忽然在一起的情况，角色之间的互动必须有前因后果，关系演进需要循序渐进。
 8. **反派描写约束**: 如果本章有反派角色出场，必须体现反派的威胁感和计谋！反派不是笨蛋，不是无能之辈。反派应该展现出自己的智慧、能力和野心，与主角形成对等的冲突。反派行为要有逻辑，不是为了使坏而使坏。
+9. **不要输出章节标题**: 系统会自动在文件开头添加 `# 第X章 XXX`，因此**你的回答必须直接从正文第一句话开始**，绝对不要再输出任何形式的章节标题（例如 `# 第X章` 或 `## 本章标题` 等）。
 
 请直接输出章节正文内容，不需要其他说明。内容使用Markdown格式，可以适当使用加粗、斜体等格式。
 """
@@ -122,7 +123,7 @@ CHAPTER_CONTINUATION_PROMPT = """请继续创作以下章节：
 
 **目标字数**: 还需要约{remaining_words}字
 
-请继续创作，保持风格和叙事的连贯性。
+请继续创作，保持风格和叙事的连贯性。同样注意，**直接从下一句话开始写，不要重复之前的文字，也不要输出任何章节标题**。
 """
 
 CHAPTER_REVISION_PROMPT = """请根据以下要求修改章节内容：
@@ -136,7 +137,7 @@ CHAPTER_REVISION_PROMPT = """请根据以下要求修改章节内容：
 **相关上下文**:
 {context}
 
-请输出修改后的完整章节内容，保持Markdown格式。
+请输出修改后的完整章节内容，保持Markdown格式。**重要提示：系统会自动管理文件标题，你的输出必须直接从正文第一句话开始，绝对不要在输出开头包含 `# 第X章 XXX` 这样的标题行！**
 """
 
 DIALOGUE_ENHANCEMENT_PROMPT = """请优化以下对话场景：
@@ -274,3 +275,149 @@ def get_scene_description_prompt(
         word_count=word_count,
         style=style
     )
+
+
+# ─────────────────────────────────────────────────────────────
+# Edit Instruction 模式（精确局部修改，大幅减少输出 token）
+# ─────────────────────────────────────────────────────────────
+
+def get_chapter_edit_system_prompt(style_prompt: str = "") -> str:
+    base = """你是一位专业的小说编辑，负责对章节进行精确的局部修改。
+
+你的任务是：
+1. 阅读原始章节内容
+2. 理解修改要求
+3. 输出最小化的编辑指令 JSON，只描述需要改变的段落
+
+【重要】不要输出完整章节，只输出编辑指令。
+"""
+    if style_prompt:
+        base += f"\n\n【写作风格与约束】\n{style_prompt}\n（即使是局部修改，也必须严格遵守上述风格要求）\n"
+    return base
+
+CHAPTER_EDIT_PROMPT = """请对以下章节进行局部修改，输出编辑指令 JSON。
+
+## 原始章节内容
+
+{original_content}
+
+## 修改要求
+
+{revision_requirements}
+
+## 输出格式
+
+输出一个 JSON 对象，格式如下：
+
+```json
+{{
+  "summary": "本次修改的简短说明",
+  "edits": [
+    {{
+      "action": "insert_before",
+      "anchor": "原文中某段的前20个字（必须精确复制原文内容）",
+      "content": "要插入的新段落内容"
+    }},
+    {{
+      "action": "replace",
+      "anchor": "要被替换的段落的前20个字（必须精确复制原文内容）",
+      "content": "替换后的新段落内容"
+    }},
+    {{
+      "action": "insert_after",
+      "anchor": "原文中某段的前20个字（必须精确复制原文内容）",
+      "content": "要在之后插入的内容"
+    }},
+    {{
+      "action": "delete",
+      "anchor": "要删除的段落的前20个字（必须精确复制原文内容）"
+    }}
+  ]
+}}
+```
+
+## 规则
+
+- **这是局部编辑！** 请只修改用户提到的部分，**绝对不要**重新生成没有被要求修改的段落！
+- 【非常重要警告】**千万不要**在 JSON 里复述不修改的原文内容！如果某个段落不需要修改，绝对不能出现在 `edits` 数组中！你的整个 JSON 字符数必须非常少。
+- `anchor` 必须是原文中真实存在的文字片段（建议刚好取一段开头的前10-20个字），用于精确定位。
+- 每次 edit 只针对一个段落或场景的修改。如果有多个修改点，请在 `edits` 数组中输出多个对象。
+- 【退路】如果你发现用户的修改要求几乎推翻了整章的情节结构（涉及超过50%的篇幅），请在 summary 中直接写入 "FULL_REWRITE_NEEDED"，系统会自动切换到全文重写模式。不要尝试用 edits 去重写大半个章节！
+- 只输出 JSON，不要有其他说明文字。
+"""
+
+
+def get_chapter_edit_prompt(
+    original_content: str,
+    revision_requirements: str,
+) -> str:
+    """获取章节局部编辑 prompt（Edit Instruction 模式）"""
+    return CHAPTER_EDIT_PROMPT.format(
+        original_content=original_content,
+        revision_requirements=revision_requirements,
+    )
+
+
+def apply_edits(original: str, edits: list) -> tuple[str, list]:
+    """
+    将编辑指令应用到原始文本。
+
+    Args:
+        original: 原始章节内容
+        edits: 编辑指令列表，每项 {"action": ..., "anchor": ..., "content": ...}
+
+    Returns:
+        (new_content, failed_edits): 修改后的文本 + 未命中的指令列表
+    """
+    import re
+    text = original
+    failed = []
+
+    for edit in edits:
+        action = edit.get("action", "")
+        anchor = edit.get("anchor", "").strip()
+        content = edit.get("content", "")
+
+        if not anchor and action != "append":
+            failed.append({**edit, "reason": "anchor 为空"})
+            continue
+
+        # 定位 anchor 在文本中的段落边界
+        idx = text.find(anchor)
+        if idx == -1:
+            # 尝试去掉首尾空白再找
+            anchor_stripped = anchor.strip()
+            idx = text.find(anchor_stripped)
+            
+        if idx == -1:
+            # 宽容模式：利用正则忽略空格和常用标点差异
+            safe_anchor = re.escape(anchor_stripped)
+            safe_anchor = safe_anchor.replace(r'\ ', r'\s*').replace(r'\，', r'[,，]?\s*').replace(r'\。', r'[.。]?\s*')
+            match = re.search(safe_anchor, text)
+            if match:
+                idx = match.start()
+
+        if idx == -1:
+            failed.append({**edit, "reason": f"未找到 anchor: {anchor[:20]}"})
+            continue
+
+        # 找到 anchor 所在段落的起止（以 \n\n 为段落分隔）
+        para_start = text.rfind("\n\n", 0, idx)
+        para_start = para_start + 2 if para_start != -1 else 0
+        para_end = text.find("\n\n", idx)
+        para_end = para_end if para_end != -1 else len(text)
+
+        if action == "insert_before":
+            text = text[:para_start] + content.rstrip("\n") + "\n\n" + text[para_start:]
+        elif action == "insert_after":
+            text = text[:para_end] + "\n\n" + content.rstrip("\n") + text[para_end:]
+        elif action == "replace":
+            text = text[:para_start] + content.rstrip("\n") + text[para_end:]
+        elif action == "delete":
+            # 删除段落及其后的空行
+            end = para_end + 2 if para_end + 2 <= len(text) else para_end
+            text = text[:para_start] + text[end:]
+        else:
+            failed.append({**edit, "reason": f"未知 action: {action}"})
+
+    return text, failed
