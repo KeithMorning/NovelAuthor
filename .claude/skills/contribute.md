@@ -20,7 +20,7 @@
    - CLI 命令列表和使用方法
    - 工作流和数据模型说明
 
-2. **README-CLI.md** - CLI 使用指南
+2. **README.md** - CLI 使用指南
    - 命令行工具的详细用法
    - 所有命令的参数说明
 
@@ -28,7 +28,7 @@
 
 ```
 /Users/keithxi/Documents/work/Nover/AGENT.md
-/Users/keithxi/Documents/work/Nover/README-CLI.md
+/Users/keithxi/Documents/work/Nover/README.md
 ```
 
 ## 项目结构速览
@@ -49,7 +49,7 @@ Nover/
 │   ├── config/                 # 配置
 │   └── memory/                 # 记忆系统
 ├── AGENT.md                    # 项目文档（必读）
-└── README-CLI.md              # CLI 文档
+└── README.md              # CLI 文档
 ```
 
 ## 修改代码流程
@@ -82,7 +82,7 @@ git push -u origin feat/your-feature
 
 ## 注意事项
 
-1. **不要重复文档** - 项目文档在 AGENT.md 和 README-CLI.md 中
+1. **不要重复文档** - 项目文档在 AGENT.md 和 README.md 中
 2. **保持兼容性** - 修改模型时考虑已有数据
 3. **遵循规范** - 方法签名和返回格式保持一致
 
@@ -90,4 +90,4 @@ git push -u origin feat/your-feature
 
 查看：
 - AGENT.md - 完整的架构和 API 说明
-- README-CLI.md - CLI 命令用法
+- README.md - CLI 命令用法

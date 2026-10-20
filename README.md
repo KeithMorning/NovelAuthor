@@ -252,9 +252,14 @@ DEEPSEEK_API_KEY=your_key_here
 ANTHROPIC_API_KEY=your_key_here
 
 # 模型配置
-DEFAULT_MODEL=deepseek-chat
-MAX_TOKENS=8000
+LLM_PROVIDER=deepseek
+DEFAULT_MODEL=deepseek-flash
+MAX_TOKENS=8192
 DEFAULT_CHAPTER_WORDS=4000
+
+# 前文上下文：超预算自动降级为摘要，避免长篇小说撑爆上下文
+FULL_CONTEXT_MODE=true
+MAX_PREVIOUS_CONTEXT_CHARS=80000
 ```
 
 ## 作家风格

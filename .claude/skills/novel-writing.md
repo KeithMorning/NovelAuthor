@@ -157,4 +157,4 @@ python3 -c "from novel_ai_agent.agents.dialogue_agent import DialogueAgent; prin
 ## 参考文档
 
 - `AGENT.md` — 完整架构和 API 说明
-- `README-CLI.md` — 所有 CLI 命令详细用法
+- `README.md` — 所有 CLI 命令详细用法
