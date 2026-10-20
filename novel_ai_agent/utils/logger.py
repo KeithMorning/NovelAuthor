@@ -5,6 +5,9 @@
 """
 import os
 import json
+import atexit
+import threading
+import time
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 from enum import Enum
@@ -58,6 +61,14 @@ class NovelCreationLogger:
 
         # 内存中的日志记录
         self.logs: List[Dict[str, Any]] = []
+
+        # JSON 快照节流：每写一条日志就重写整个文件是 O(n²) 的磁盘开销。
+        # 这里按时间/条数节流，并在步骤结束、错误和完成时强制落盘。
+        self._json_flush_interval = 0.5
+        self._json_flush_every = 20
+        self._logs_since_flush = 0
+        self._last_json_flush = 0.0
+        self._json_lock = threading.Lock()
 
         # 工作流状态
         self.workflow_status = {
@@ -133,7 +144,8 @@ class NovelCreationLogger:
         # 写入文本日志
         self._write_text_log(log_entry)
 
-        # 写入JSON日志
+        # 写入JSON日志（按时间/条数节流）
+        self._logs_since_flush += 1
         self._write_json_log()
 
     def _write_text_log(self, log_entry: Dict[str, Any]):
@@ -157,13 +169,42 @@ class NovelCreationLogger:
         with open(self.log_file, "a", encoding="utf-8") as f:
             f.write(log_line)
 
-    def _write_json_log(self):
-        """写入JSON格式日志"""
-        with open(self.json_log_file, "w", encoding="utf-8") as f:
-            json.dump({
-                "workflow_status": self.workflow_status,
-                "logs": self.logs
-            }, f, ensure_ascii=False, indent=2)
+    def _write_json_log(self, force: bool = False):
+        """
+        写入 JSON 格式日志。
+
+        默认做节流；force=True 时立即落盘（步骤结束、错误、完成、进程退出）。
+        使用临时文件 + os.replace 保证读取方不会看到写了一半的 JSON。
+        """
+        now = time.monotonic()
+        if (
+            not force
+            and self._logs_since_flush < self._json_flush_every
+            and (now - self._last_json_flush) < self._json_flush_interval
+        ):
+            return
+
+        payload = json.dumps(
+            {"workflow_status": self.workflow_status, "logs": self.logs},
+            ensure_ascii=False,
+            indent=2,
+        )
+
+        with self._json_lock:
+            tmp_file = self.json_log_file.with_suffix(".json.tmp")
+            tmp_file.write_text(payload, encoding="utf-8")
+            os.replace(tmp_file, self.json_log_file)
+
+        self._last_json_flush = now
+        self._logs_since_flush = 0
+
+    def flush(self):
+        """立即把当前日志状态写入 JSON 文件"""
+        self._write_json_log(force=True)
+
+    def close(self):
+        """关闭日志记录器前确保数据已落盘"""
+        self.flush()
 
     def step_start(self, step: WorkflowStep, message: str = None):
         """
@@ -205,6 +246,9 @@ class NovelCreationLogger:
         if step.value not in self.workflow_status["steps_completed"]:
             self.workflow_status["steps_completed"].append(step.value)
 
+        # 步骤边界强制落盘，保证外部查询能立即看到最新状态
+        self.flush()
+
     def step_error(
         self,
         step: WorkflowStep,
@@ -232,6 +276,9 @@ class NovelCreationLogger:
         # 更新工作流状态为失败
         self.workflow_status["status"] = "failed"
         self.workflow_status["end_time"] = datetime.now().isoformat()
+
+        # 失败时立即落盘，避免进程退出丢失错误信息
+        self.flush()
 
     def warning(
         self,
@@ -272,6 +319,7 @@ class NovelCreationLogger:
 
         # 生成摘要
         self._write_summary()
+        self.flush()
 
     def _write_summary(self):
         """生成并写入摘要"""
@@ -365,8 +413,22 @@ def remove_logger(novel_id: str):
     Args:
         novel_id: 小说ID
     """
-    if novel_id in _loggers:
-        del _loggers[novel_id]
+    logger = _loggers.pop(novel_id, None)
+    if logger is not None:
+        logger.close()
+
+
+def _flush_all_loggers():
+    """进程退出前把仍有内存缓存的日志落盘"""
+    for logger in list(_loggers.values()):
+        try:
+            logger.flush()
+        except Exception:
+            # 解释器退出阶段不再抛异常，避免影响进程退出码
+            pass
+
+
+atexit.register(_flush_all_loggers)
 
 
 def get_novel_logs(novel_id: str) -> Optional[Dict[str, Any]]:
@@ -379,6 +441,10 @@ def get_novel_logs(novel_id: str) -> Optional[Dict[str, Any]]:
     Returns:
         Optional[Dict]: 日志数据，如果不存在返回None
     """
+    logger = _loggers.get(novel_id)
+    if logger is not None:
+        logger.flush()
+
     log_file = Path("logs") / f"{novel_id}.json"
 
     if not log_file.exists():

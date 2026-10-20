@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     )
 
     # LLM提供商配置
-    llm_provider: str = "anthropic"  # 默认使用Anthropic
+    llm_provider: str = "openai"  # 默认使用 OpenAI（可在 .env 中覆盖）
 
     # Anthropic配置
     anthropic_api_key: Optional[str] = None
@@ -41,7 +41,7 @@ class Settings(BaseSettings):
 
     # DeepSeek配置 (使用OpenAI兼容API)
     deepseek_api_key: Optional[str] = None
-    deepseek_api_base: str = "https://api.deepseek.com/v1"
+    deepseek_api_base: str = "https://api.deepseek.com"
 
     # Azure OpenAI配置
     azure_openai_api_key: Optional[str] = None
@@ -70,8 +70,14 @@ class Settings(BaseSettings):
     # 写作配置
     default_chapter_words: int = 4000  # 默认章节字数（约5000-6000 tokens输出）
 
+    # 上下文配置
+    # 为 True 时优先把前文章节全文放入 prompt；超过 max_previous_context_chars
+    # 会自动降级为“摘要 + 最近章节片段”，避免长篇小说撑爆上下文窗口。
+    full_context_mode: bool = True
+    max_previous_context_chars: int = 80000  # 前文全文的字符预算（约 5 万 token）
+
     # 代理配置（用于Charles抓包）
-    proxy_enabled: bool = True  # 开启代理用于抓包
+    proxy_enabled: bool = False  # 开启代理用于抓包
     proxy_url: str = "http://127.0.0.1:8888"  # Charles默认端口
 
     def get_model_name(self) -> str:
@@ -88,7 +94,7 @@ class Settings(BaseSettings):
         model_defaults = {
             "anthropic": "claude-sonnet-4-20250514",
             "openai": "gpt-4o",
-            "deepseek": "deepseek-reasoner",
+            "deepseek": "deepseek-flash",
             "azure": "gpt-4",
             "gemini": "gemini-2.0-flash"
         }

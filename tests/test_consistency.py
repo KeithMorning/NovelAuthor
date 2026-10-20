@@ -31,27 +31,19 @@ async def test_outline_expansion_with_dead_character():
             "transitions": {"previous": "After the battle", "next": "Victory"}
         }
         
-        async def mock_ainvoke(messages):
+        async def mock_stream_invoke(llm, messages, on_token=None):
             prompt_content = messages[1].content
-            print(f"DEBUG: FULL PROMPT CONTENT:\n{prompt_content}\n-------------------")
-            
-            # VERIFY: Prompt must contain the Story Context we passed
-            print(f"DEBUG: Prompt Context Check: 'Zhang Qiang: 已死亡' in prompt? {'Zhang Qiang: 已死亡' in prompt_content}")
-            print(f"DEBUG: Prompt Instruction Check: '核心指令: 渐进式适配' in prompt? {'核心指令: 渐进式适配' in prompt_content}")
-            
-            # If assertions fail here, they will raise exception and fail the test
-            if "Zhang Qiang: 已死亡" not in prompt_content:
-                print("FAILURE: Prompt missing World State")
-            if "核心指令: 渐进式适配" not in prompt_content:
-                print("FAILURE: Prompt missing Progressive Adaptation instruction")
-            
-            # Use json.dumps for valid JSON
-            return MagicMock(content=f"```json\n{json.dumps(mock_llm_response)}\n```")
 
-        agent.llm = MagicMock()
-        agent.llm.ainvoke = mock_ainvoke
-        # We need to mock _get_json_llm to return our mocked llm
-        agent._get_json_llm = MagicMock(return_value=agent.llm)
+            # VERIFY: Prompt must contain the Story Context we passed
+            assert "Zhang Qiang: 已死亡" in prompt_content, "Prompt missing World State"
+            assert "核心指令: 渐进式适配" in prompt_content, (
+                "Prompt missing Progressive Adaptation instruction"
+            )
+
+            return f"```json\n{json.dumps(mock_llm_response)}\n```"
+
+        agent._stream_invoke = mock_stream_invoke
+        agent._get_json_llm = MagicMock()
 
         # 2. Setup Context
         outline = Outline(

@@ -16,7 +16,6 @@ from ..prompts.outline_prompts import (
     get_preliminary_outline_refinement_prompt,
     get_chapter_expansion_prompt
 )
-from ..config.settings import Settings
 
 
 class OutlineAgent(BaseAgent):
@@ -234,7 +233,7 @@ class OutlineAgent(BaseAgent):
         genre: str,
         theme: str,
         chapter_count: int = 20,
-        words_per_chapter: int = Settings().default_chapter_words,
+        words_per_chapter: Optional[int] = None,
         user_requirements: str = "",
         character_info: str = "",
         preliminary_outline_content: str = "",
@@ -257,6 +256,9 @@ class OutlineAgent(BaseAgent):
             Dict: 包含生成的Outline对象
         """
         try:
+            if words_per_chapter is None:
+                words_per_chapter = self.settings.default_chapter_words
+
             # 构建prompt
             user_prompt = get_outline_generation_prompt(
                 title=title,
@@ -358,7 +360,7 @@ class OutlineAgent(BaseAgent):
   "summary": "修改后的梗概",
   "key_events": ["修改后的事件1", "事件2"],
   "characters_involved": ["角色1", "角色2"],
-  "estimated_words": Settings().default_chapter_words
+  "estimated_words": {self.settings.default_chapter_words}
 }}
 ```"""
 

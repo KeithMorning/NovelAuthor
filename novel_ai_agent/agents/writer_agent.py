@@ -12,6 +12,7 @@ from ..models.outline import Outline, ChapterPlan
 from ..models.character import Character
 from ..config.styles import get_style
 from ..utils.json_parser import extract_json_from_response
+from ..utils.text_utils import estimate_tokens, strip_generated_chapter_title
 from ..prompts.writing_prompts import (
     get_writing_system_prompt,
     get_chapter_writing_prompt,
@@ -119,8 +120,7 @@ class WriterAgent(BaseAgent):
             system_prompt = get_writing_system_prompt(self.style.prompt_template)
 
             # 获取目标字数（优先使用 settings 默认值，避免大纲旧值）
-            from ..config.settings import Settings
-            target_words = Settings().default_chapter_words
+            target_words = self.settings.default_chapter_words
 
             # 获取地点和时间信息
             location = ""
@@ -175,10 +175,10 @@ class WriterAgent(BaseAgent):
 
             # 计算输入token数量（粗略估算）
             input_text = system_prompt + user_prompt
-            input_tokens_estimate = len(input_text) // 3
+            input_tokens_estimate = estimate_tokens(input_text)
 
             # 计算输出token数量
-            output_tokens_estimate = len(content) // 3
+            output_tokens_estimate = estimate_tokens(content)
 
             # 记录章节写作统计到日志
             self.logger.log(
@@ -188,10 +188,13 @@ class WriterAgent(BaseAgent):
             )
 
             # 清理生成的文本，防止带有重复的大标题 (如 `# 第1章 XXX`)
-            import re
-            # 匹配以 1-2个 # 开头，跟着 "第X章" 的行，并移除
-            content = re.sub(r'^\s*#{1,2}\s*第[0-9一二三四五六七八九十百]+[章节].*?\n+', '', content, count=1, flags=re.MULTILINE)
-            content = content.lstrip()
+            content = strip_generated_chapter_title(content)
+
+            # 空响应保护：绝不允许把空章节写入存档
+            if len(content.strip()) < 500:
+                raise RuntimeError(
+                    f"LLM 返回的章节内容过短（{len(content.strip())} 字符），已中止保存"
+                )
 
             # 创建Chapter对象
             chapter = Chapter(
@@ -281,9 +284,12 @@ class WriterAgent(BaseAgent):
             )
 
             # 清理生成的文本，防止带有重复的大标题 (如 `# 第1章 XXX`)
-            import re
-            new_content = re.sub(r'^\s*#{1,2}\s*第[0-9一二三四五六七八九十百]+[章节].*?\n+', '', new_content, count=1, flags=re.MULTILINE)
-            new_content = new_content.lstrip()
+            new_content = strip_generated_chapter_title(new_content)
+
+            if len(new_content.strip()) < 500:
+                raise RuntimeError(
+                    f"LLM 返回的修改内容过短（{len(new_content.strip())} 字符），已中止保存"
+                )
 
             # 创建新版本的Chapter（使用 model_copy 保留伏笔等结构化数据）
             revised_chapter = chapter.model_copy(update={
@@ -347,9 +353,8 @@ class WriterAgent(BaseAgent):
             if raw_stripped.startswith("```"):
                 parts = raw_stripped.split("```")
                 raw_stripped = parts[1][4:] if parts[1].startswith("json") else parts[1]
-            import json as _json
             try:
-                parsed = _json.loads(raw_stripped.strip())
+                parsed = json.loads(raw_stripped.strip())
             except Exception as e:
                 return {"status": "error", "message": f"解析局部修改 JSON 失败: {e}\nRaw={raw_stripped[:100]}"}
 
@@ -456,12 +461,23 @@ class WriterAgent(BaseAgent):
 
         unresolved_hooks_text = "\n".join(unresolved_hooks) if unresolved_hooks else "无"
 
+        # 摘要不能只看开头：章节的死亡、转折、伏笔回收往往发生在结尾。
+        # 短章节直接用全文；长章节保留开头 4000 字 + 结尾 3000 字。
+        if len(content) <= 6000:
+            digest_excerpt = content
+        else:
+            digest_excerpt = (
+                content[:4000]
+                + "\n\n……（中段省略）……\n\n"
+                + content[-3000:]
+            )
+
         prompt = f"""请从以下章节内容中提取结构化信息，以JSON格式返回。
 
 ## 第{chapter_plan.chapter_number}章 {chapter_plan.title}
 
-### 章节内容（节选关键部分）
-{content[:3000]}
+### 章节内容（开头与结尾节选）
+{digest_excerpt}
 
 ### 前文尚未回收的伏笔
 {unresolved_hooks_text}
@@ -557,184 +573,197 @@ class WriterAgent(BaseAgent):
         previous_chapters: Optional[List[Chapter]],
         outline: Optional[Outline] = None,
         current_chapter_num: int = 1,
-        full_context_mode: bool = True  # 模式B：完整上下文
+        full_context_mode: Optional[bool] = None,
+        max_context_chars: Optional[int] = None,
     ) -> str:
         """
-        准备前文内容
+        准备前文内容。
+
+        默认优先使用完整上下文（模式B）；当前文全文超过字符预算时，
+        自动降级为“摘要 + 最近章节片段”，避免长篇小说撑爆上下文窗口。
 
         Args:
             previous_chapters: 前文章节列表
             outline: 大纲
             current_chapter_num: 当前章节号
-            full_context_mode: 是否使用完整上下文模式（模式B）
+            full_context_mode: 是否优先使用完整上下文；默认读取 settings
+            max_context_chars: 全文上下文字符预算；默认读取 settings
 
-        构建结构（摘要模式）:
-            1. 核心剧情线索
-            2. 待回收的伏笔
-            3. 全部章节摘要
-            4. 角色当前状态
-            5. 最近2章结尾片段
-
-        构建结构（完整模式）:
-            1. 核心剧情线索
-            2. 全部章节完整内容
-            3. 伏笔追踪
-            4. 角色状态约束
+        Returns:
+            str: 可直接放入 prompt 的前文内容
         """
-        # 模式B：完整上下文
-        if full_context_mode:
-            return self._prepare_full_context(previous_chapters, outline, current_chapter_num)
-        sections = []
+        if full_context_mode is None:
+            configured = getattr(self.settings, "full_context_mode", True)
+            full_context_mode = configured if isinstance(configured, bool) else True
+        if max_context_chars is None:
+            configured = getattr(self.settings, "max_previous_context_chars", 80000)
+            max_context_chars = configured if isinstance(configured, int) else 80000
 
-        # 1. 核心剧情线索
-        if outline and outline.plot_points:
-            relevant_points = []
-            for point in outline.plot_points:
-                # 尝试解析 chapter_range，如 "第1-5章"
-                try:
-                    range_str = point.chapter_range.replace("第", "").replace("章", "")
-                    if "-" in range_str:
-                        start, end = map(int, range_str.split("-"))
-                        # 如果该情节点涉及当前章节或之前章节，则包含进来
-                        if start <= current_chapter_num:
-                            relevant_points.append(f"- 【{point.name}】({point.chapter_range}): {point.description}")
-                    else:
-                        num = int(range_str)
-                        if num <= current_chapter_num:
-                            relevant_points.append(f"- 【{point.name}】(第{num}章): {point.description}")
-                except:
-                    # 解析失败则默认包含
-                    relevant_points.append(f"- 【{point.name}】: {point.description}")
-            
-            if relevant_points:
-                sections.append("【核心剧情线索】")
-                sections.extend(relevant_points)
-                sections.append("")
+        # 1. 核心剧情线索（两种模式共用）
+        sections = self._plot_point_sections(outline, current_chapter_num)
 
         if not previous_chapters:
             if not sections:
-                return "这是第一章，无前文"
-            return "\n".join(sections) + "\n这是第一章，开始创作之旅吧。"
+                return "【前文】这是第一章，无前文内容。"
+            return "\n".join(sections) + "\n【前文】这是第一章，开始创作之旅吧。"
 
-        # 2. 全局伏笔追踪
-        all_unresolved_hooks = []
-        all_resolved = set()
+        hooks = self._collect_unresolved_hooks(previous_chapters)
+        states = self._collect_character_states(previous_chapters)
+
+        if full_context_mode:
+            full_chars = sum(len(ch.content or "") for ch in previous_chapters)
+            if full_chars <= max_context_chars:
+                return self._render_full_context(
+                    sections, hooks, states, previous_chapters
+                )
+
+            # 超过预算：记录一次告警后降级，避免无提示地损失上下文
+            self.logger.log(
+                level=LogLevel.WARNING,
+                step=WorkflowStep.CHAPTER_WRITING,
+                message=(
+                    f"前文全文 {full_chars} 字符超过预算 "
+                    f"{max_context_chars}，自动切换为摘要上下文"
+                ),
+            )
+
+        return self._render_summary_context(
+            sections, hooks, states, previous_chapters
+        )
+
+    @staticmethod
+    def _plot_point_sections(
+        outline: Optional[Outline],
+        current_chapter_num: int,
+    ) -> List[str]:
+        """提取当前章节之前的核心剧情线索"""
+        if not outline or not outline.plot_points:
+            return []
+
+        relevant_points: List[str] = []
+        for point in outline.plot_points:
+            # 尝试解析 chapter_range，如 "第1-5章"
+            try:
+                range_str = point.chapter_range.replace("第", "").replace("章", "")
+                if "-" in range_str:
+                    start, _end = map(int, range_str.split("-", 1))
+                    if start <= current_chapter_num:
+                        relevant_points.append(
+                            f"- 【{point.name}】({point.chapter_range}): {point.description}"
+                        )
+                else:
+                    num = int(range_str)
+                    if num <= current_chapter_num:
+                        relevant_points.append(
+                            f"- 【{point.name}】(第{num}章): {point.description}"
+                        )
+            except (ValueError, AttributeError):
+                # 解析失败则默认包含
+                relevant_points.append(f"- 【{point.name}】: {point.description}")
+
+        if not relevant_points:
+            return []
+        return ["【核心剧情线索】", *relevant_points, ""]
+
+    @staticmethod
+    def _collect_unresolved_hooks(previous_chapters: List[Chapter]) -> List[str]:
+        """收集前文中尚未回收的伏笔"""
+        resolved = set()
         for ch in previous_chapters:
-            all_resolved.update(ch.hooks_resolved)
+            resolved.update(ch.hooks_resolved or [])
+
+        hooks: List[str] = []
         for ch in previous_chapters:
-            for hook in ch.hooks_planted:
-                if hook not in all_resolved:
-                    all_unresolved_hooks.append(f"第{ch.number}章: {hook}")
+            for hook in ch.hooks_planted or []:
+                if hook not in resolved:
+                    hooks.append(f"第{ch.number}章: {hook}")
+        return hooks
 
-        if all_unresolved_hooks:
-            sections.append("【待回收的伏笔】")
-            for hook in all_unresolved_hooks:
-                sections.append(f"- {hook}")
-            sections.append("")
+    @staticmethod
+    def _collect_character_states(previous_chapters: List[Chapter]) -> Dict[str, str]:
+        """合并所有前文章节中的角色状态（后面的状态覆盖前面的）"""
+        states: Dict[str, str] = {}
+        for ch in previous_chapters:
+            states.update(ch.character_states or {})
+        return states
 
-        # 3. 全部章节摘要
+    @staticmethod
+    def _append_hook_sections(sections: List[str], hooks: List[str]) -> None:
+        if not hooks:
+            return
+        sections.append("【待回收的伏笔】")
+        sections.extend(f"- {hook}" for hook in hooks)
+        sections.append("")
+
+    @staticmethod
+    def _append_state_sections(
+        sections: List[str],
+        states: Dict[str, str],
+        strict: bool = False,
+    ) -> None:
+        if not states:
+            return
+
+        sections.append("【角色当前状态】（必须严格遵守）" if strict else "【角色当前状态】")
+        for name, state in states.items():
+            state_text = str(state)
+            if strict and any(k in state_text for k in ("死", "亡", "消失")):
+                sections.append(
+                    f"- ⚠️ {name}: {state_text} （已死亡/消失，绝对不能出场）"
+                )
+            else:
+                sections.append(f"- {name}: {state_text}")
+        sections.append("")
+
+    def _render_full_context(
+        self,
+        sections: List[str],
+        hooks: List[str],
+        states: Dict[str, str],
+        previous_chapters: List[Chapter],
+    ) -> str:
+        """渲染完整上下文（模式B）"""
+        sections = list(sections)
+        self._append_hook_sections(sections, hooks)
+        self._append_state_sections(sections, states, strict=True)
+
+        sections.append("【前文完整内容】（必须承接以下内容）")
+        for ch in previous_chapters:
+            sections.append(f"\n{'=' * 40}")
+            sections.append(f"第{ch.number}章 {ch.title}")
+            sections.append(f"{'=' * 40}")
+            sections.append(ch.content or "")
+
+        return "\n".join(sections)
+
+    def _render_summary_context(
+        self,
+        sections: List[str],
+        hooks: List[str],
+        states: Dict[str, str],
+        previous_chapters: List[Chapter],
+    ) -> str:
+        """渲染摘要上下文（token 友好模式）"""
+        sections = list(sections)
+        self._append_hook_sections(sections, hooks)
+
+        # 全部章节摘要
         sections.append("【故事进展】")
         for ch in previous_chapters:
             summary = ch.actual_summary or ch.summary
             sections.append(f"第{ch.number}章 {ch.title}: {summary}")
         sections.append("")
 
-        # 4. 角色当前状态
-        latest_states = {}
-        for ch in previous_chapters:
-            latest_states.update(ch.character_states)
-        if latest_states:
-            sections.append("【角色当前状态】")
-            for name, state in latest_states.items():
-                sections.append(f"- {name}: {state}")
-            sections.append("")
+        self._append_state_sections(sections, states, strict=True)
 
-        # 5. 最近2章的详细内容
-        recent = previous_chapters[-2:]
+        # 最近 2 章的结尾片段，保证行文衔接
         sections.append("【最近章节详情】")
-        for ch in recent:
+        for ch in previous_chapters[-2:]:
             sections.append(f"第{ch.number}章 {ch.title}")
             if ch.content:
-                tail = ch.content[-800:] if len(ch.content) > 800 else ch.content
+                tail = ch.content[-800:]
                 sections.append(f"结尾片段: ...{tail}")
             sections.append("")
-
-        return "\n".join(sections)
-
-    def _prepare_full_context(
-        self,
-        previous_chapters: Optional[List[Chapter]],
-        outline: Optional[Outline] = None,
-        current_chapter_num: int = 1
-    ) -> str:
-        """
-        准备完整上下文（模式B）
-        将所有前文内容完整纳入上下文窗口
-        """
-        sections = []
-
-        if not previous_chapters:
-            return "【前文】这是第一章，无前文内容。"
-
-        # 1. 核心剧情线索
-        if outline and outline.plot_points:
-            relevant_points = []
-            for point in outline.plot_points:
-                try:
-                    range_str = point.chapter_range.replace("第", "").replace("章", "")
-                    if "-" in range_str:
-                        start, end = map(int, range_str.split("-"))
-                        if start <= current_chapter_num:
-                            relevant_points.append(f"- 【{point.name}】({point.chapter_range}): {point.description}")
-                    else:
-                        num = int(range_str)
-                        if num <= current_chapter_num:
-                            relevant_points.append(f"- 【{point.name}】(第{num}章): {point.description}")
-                except:
-                    relevant_points.append(f"- 【{point.name}】: {point.description}")
-
-            if relevant_points:
-                sections.append("【核心剧情线索】")
-                sections.extend(relevant_points)
-                sections.append("")
-
-        # 2. 伏笔追踪
-        all_unresolved_hooks = []
-        all_resolved = set()
-        for ch in previous_chapters:
-            all_resolved.update(ch.hooks_resolved)
-        for ch in previous_chapters:
-            for hook in ch.hooks_planted:
-                if hook not in all_resolved:
-                    all_unresolved_hooks.append(f"第{ch.number}章: {hook}")
-
-        if all_unresolved_hooks:
-            sections.append("【待回收的伏笔】")
-            for hook in all_unresolved_hooks:
-                sections.append(f"- {hook}")
-            sections.append("")
-
-        # 3. 角色当前状态
-        latest_states = {}
-        for ch in previous_chapters:
-            latest_states.update(ch.character_states)
-        if latest_states:
-            sections.append("【角色当前状态】（必须严格遵守）")
-            for name, state in latest_states.items():
-                # 标记不可出场的角色
-                if "死" in state or "亡" in state or "消失" in state:
-                    sections.append(f"- ⚠️ {name}: {state} （已死亡/消失，绝对不能出场）")
-                else:
-                    sections.append(f"- {name}: {state}")
-            sections.append("")
-
-        # 4. 全部章节完整内容（核心！需要128k上下文窗口）
-        sections.append("【前文完整内容】（必须承接以下内容）")
-        for ch in previous_chapters:
-            sections.append(f"\n{'='*40}")
-            sections.append(f"第{ch.number}章 {ch.title}")
-            sections.append(f"{'='*40}")
-            sections.append(ch.content)
 
         return "\n".join(sections)
 

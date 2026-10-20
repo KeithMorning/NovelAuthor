@@ -3,6 +3,7 @@
 负责章节润色、一致性检查、逻辑审查等编辑工作
 """
 import json
+from datetime import datetime
 from typing import Dict, Any, List, Optional, Callable
 from langchain_core.messages import HumanMessage, SystemMessage
 from .base_agent import BaseAgent
@@ -10,6 +11,7 @@ from ..models.chapter import Chapter
 from ..models.character import Character
 from ..models.outline import Outline
 from ..utils.json_parser import extract_json_from_response
+from ..utils.text_utils import strip_generated_chapter_title
 from ..config.styles import get_style
 from ..prompts.editor_prompts import (
     EDITOR_SYSTEM_PROMPT,
@@ -112,16 +114,19 @@ class EditorAgent(BaseAgent):
             polished_content = await self._stream_invoke(self.llm, messages, on_token=on_token)
 
             # 清理生成的文本，防止带有重复的大标题 (如 `# 第1章 XXX`)
-            import re
-            polished_content = re.sub(r'^\s*#{1,2}\s*第[0-9一二三四五六七八九十百]+[章节].*?\n+', '', polished_content, count=1, flags=re.MULTILINE)
-            polished_content = polished_content.lstrip()
+            polished_content = strip_generated_chapter_title(polished_content)
+
+            if len(polished_content.strip()) < 500:
+                raise RuntimeError(
+                    f"LLM 返回的润色内容过短（{len(polished_content.strip())} 字符），已中止保存"
+                )
 
             # 创建新版本的章节（使用 model_copy 保留伏笔等结构化数据）
             polished_chapter = chapter.model_copy(update={
                 "content": polished_content,
                 "version": chapter.version + 1,
                 "notes": f"润色版本 - 关注: {', '.join(focus_areas) if focus_areas else '全面润色'}",
-                "updated_at": __import__('datetime').datetime.now()
+                "updated_at": datetime.now()
             })
 
             polished_chapter.update_word_count()

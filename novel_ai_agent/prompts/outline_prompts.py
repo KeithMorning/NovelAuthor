@@ -250,9 +250,9 @@ def get_outline_generation_prompt(
     preliminary_outline_content: str = "",
     core_concepts: str = ""
 ) -> str:
-    from ..config.settings import Settings
+    from ..config.settings import get_settings
     if words_per_chapter is None:
-        words_per_chapter = Settings().default_chapter_words
+        words_per_chapter = get_settings().default_chapter_words
 
     prompt = OUTLINE_GENERATION_PROMPT.format(
         title=title,

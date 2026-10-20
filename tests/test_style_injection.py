@@ -20,7 +20,7 @@ async def test_writer_agent_edit_chapter_style():
             assert "刘慈欣" in full_prompt, "Style name missing in edit_chapter prompt"
             print("WriterAgent edit_chapter style injection checked OK.")
             
-            return '```json\n{"summary": "Test", "edits": []}\n```'
+            return '```json\n{"summary": "Test", "edits": [{"action": "replace", "anchor": "Original content", "content": "New content"}]}\n```'
             
         agent._stream_invoke = mock_stream_invoke
         agent._get_json_llm = MagicMock()
@@ -47,7 +47,7 @@ async def test_editor_agent_polish_chapter_style():
             assert "刘慈欣" in full_prompt, "Style name missing in polish_chapter prompt"
             print("EditorAgent polish_chapter style injection checked OK.")
             
-            return "This is the polished content."
+            return "这是润色后的内容。" * 100
             
         agent._stream_invoke = mock_stream_invoke
         

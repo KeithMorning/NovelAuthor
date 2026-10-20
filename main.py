@@ -54,7 +54,8 @@ async def async_prompt(prompt_text: str) -> str:
         del _pasted_texts[m]
     return user_input
 
-# 配置日志
+# 配置日志（确保日志目录存在，避免首次运行时 FileHandler 初始化失败）
+Path('logs').mkdir(parents=True, exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
@@ -258,18 +259,24 @@ def init():
     else:
         console.print("[yellow]![/yellow] .env 文件已存在,跳过创建")
 
-    # 确保输出目录存在
+    # 确保输出目录存在（以 settings 为准，兼容 .env 中自定义的 OUTPUT_DIR）
+    from novel_ai_agent.config.settings import get_settings
+
+    settings = get_settings()
+    output_dir = Path(settings.output_dir)
     output_dirs = [
-        "novel_ai_agent/output/novels",
-        "novel_ai_agent/output/outlines",
-        "novel_ai_agent/output/characters",
-        "novel_ai_agent/data/chroma"
+        output_dir,
+        output_dir / "novels",
+        output_dir / "outlines",
+        output_dir / "characters",
+        Path(settings.chroma_persist_directory),
+        Path("logs"),
     ]
 
     for dir_path in output_dirs:
-        Path(dir_path).mkdir(parents=True, exist_ok=True)
+        dir_path.mkdir(parents=True, exist_ok=True)
 
-    console.print("[green]✓[/green] 已创建输出目录")
+    console.print(f"[green]✓[/green] 已创建输出目录: [cyan]{output_dir}[/cyan]")
     console.print("\n[bold green]初始化完成![/bold green]")
     console.print("\n使用 [cyan]python main.py --help[/cyan] 查看可用命令")
 
@@ -415,51 +422,47 @@ def create(
 
             console.print(Panel(f"[bold cyan]自动写作模式 - 共{total_chapters}章[/bold cyan]"))
 
-            # 按顺序写作每一章
+            # 按顺序写作每一章（所有章节共用一个事件循环，复用 HTTP 连接）
             from rich.live import Live
             from rich.text import Text
 
-            for ch in range(1, total_chapters + 1):
-                _chars = [0]   # 用列表绕开闭包 nonlocal 限制
-                _live_ref2 = [None]
+            async def _auto_write_all() -> bool:
+                for ch in range(1, total_chapters + 1):
+                    chars = [0]   # 用列表绕开闭包 nonlocal 限制
+                    live_ref = [None]
 
-                def _make_on_token(chapter_num, chars_ref, live_ref):
-                    def _on_token(token: str):
-                        chars_ref[0] += len(token)
-                        if live_ref[0]:
-                            live_ref[0].update(Text(
-                                f"✍  正在写作第{chapter_num}章...  已生成 {chars_ref[0]} 字",
-                                style="cyan"
-                            ))
-                    return _on_token
+                    def _make_on_token(chapter_num, chars_ref, live_ref):
+                        def _on_token(token: str):
+                            chars_ref[0] += len(token)
+                            if live_ref[0]:
+                                live_ref[0].update(Text(
+                                    f"✍  正在写作第{chapter_num}章...  已生成 {chars_ref[0]} 字",
+                                    style="cyan"
+                                ))
+                        return _on_token
 
-                _on_token = _make_on_token(ch, _chars, _live_ref2)
-                _wr_holder = {}
+                    on_token = _make_on_token(ch, chars, live_ref)
 
-                async def _do_write(chapter_num=ch):
-                    _wr_holder["result"] = await coordinator.write_chapter_workflow(
-                        novel_id=novel_id,
-                        chapter_number=chapter_num,
-                        enable_expansion=True,
-                        force=False,
-                        on_token=_on_token
-                    )
+                    with Live(Text(f"✍  正在写作第{ch}章...  已生成 0 字", style="cyan"),
+                              console=console, refresh_per_second=4) as live2:
+                        live_ref[0] = live2
+                        write_result = await coordinator.write_chapter_workflow(
+                            novel_id=novel_id,
+                            chapter_number=ch,
+                            enable_expansion=True,
+                            force=False,
+                            on_token=on_token
+                        )
 
-                with Live(Text(f"✍  正在写作第{ch}章...  已生成 0 字", style="cyan"),
-                          console=console, refresh_per_second=4) as live2:
-                    _live_ref2[0] = live2
-                    asyncio.run(_do_write())
+                    if write_result["status"] == "success":
+                        ch_obj = write_result["chapter"]
+                        console.print(f"[green]✓[/green] 第{ch}章完成: {ch_obj.title} ({ch_obj.word_count}字)")
+                    else:
+                        console.print(f"[red]✗[/red] 第{ch}章写作失败: {write_result.get('message', '未知错误')}")
+                        return False
+                return True
 
-                write_result = _wr_holder.get("result", {"status": "error", "message": "未知错误"})
-
-
-                if write_result["status"] == "success":
-                    ch_obj = write_result["chapter"]
-                    console.print(f"[green]✓[/green] 第{ch}章完成: {ch_obj.title} ({ch_obj.word_count}字)")
-                else:
-                    console.print(f"[red]✗[/red] 第{ch}章写作失败: {write_result.get('message', '未知错误')}")
-                    break
-            else:
+            if asyncio.run(_auto_write_all()):
                 # 所有章节写作完成
                 console.print(Panel(f"[bold green]✓ 所有{total_chapters}章写作完成！[/bold green]"))
 
@@ -527,34 +530,36 @@ def create(
                         if not user_input:
                             continue
 
-                        # 规则路由
-                        action = dialogue_agent.fast_route(user_input)
-                        if action:
-                            console.print(f"[dim]→ {action['reason']}，执行中...[/dim]")
-                            exec_context["novel"] = novel
-                            exec_result = await _exec_with_stream(dialogue_agent, action, exec_context)
-                            if exec_result.get("status") == "success":
-                                console.print(f"[green]✓ {exec_result.get('message', '操作完成')}[/green]\n")
-                                novel = file_manager.load_novel_json(novel_id)
-                                context["novel"] = novel
-                            else:
-                                console.print(f"[red]✗ {exec_result.get('message', '执行失败')}[/red]\n")
+                        # 规则路由（fast_route 可能返回多个 action）
+                        fast_actions = dialogue_agent.fast_route(user_input)
+                        if fast_actions:
+                            for fa in fast_actions:
+                                console.print(f"[dim]→ {fa['reason']}，执行中...[/dim]")
+                                exec_context["novel"] = novel
+                                exec_result = await _exec_with_stream(dialogue_agent, fa, exec_context)
+                                if exec_result.get("status") == "success":
+                                    console.print(f"[green]✓ {exec_result.get('message', '操作完成')}[/green]\n")
+                                    novel = file_manager.load_novel_json(novel_id)
+                                    context["novel"] = novel
+                                else:
+                                    console.print(f"[red]✗ {exec_result.get('message', '执行失败')}[/red]\n")
+                                    break
                         else:
                             with console.status("[bold green]正在思考..."):
                                 chat_result = await dialogue_agent.chat(user_input, context)
                             if chat_result["status"] == "success":
                                 console.print(f"\n[bold green]助手[/bold green]: {chat_result['response']}\n")
-                                if chat_result.get("action"):
-                                    action = chat_result["action"]
-                                    console.print(f"[dim]→ {_TOOL_LABELS.get(action['tool'], action.get('reason', action['tool']))}...[/dim]")
+                                for act in chat_result.get("actions") or []:
+                                    console.print(f"[dim]→ {_TOOL_LABELS.get(act['tool'], act.get('reason', act['tool']))}...[/dim]")
                                     exec_context["novel"] = novel
-                                    exec_result = await _exec_with_stream(dialogue_agent, action, exec_context)
+                                    exec_result = await _exec_with_stream(dialogue_agent, act, exec_context)
                                     if exec_result.get("status") == "success":
                                         console.print(f"[green]✓ {exec_result.get('message', '操作完成')}[/green]\n")
                                         novel = file_manager.load_novel_json(novel_id)
                                         context["novel"] = novel
                                     else:
                                         console.print(f"[red]✗ {exec_result.get('message', '执行失败')}[/red]\n")
+                                        break
                             else:
                                 console.print(f"[red]错误: {chat_result.get('message', '未知错误')}[/red]")
 
@@ -567,21 +572,6 @@ def create(
         console.print(f"\n[red]✗[/red] {result['message']}")
         if "error" in result:
             console.print(f"[red]错误详情: {result['error']}[/red]")
-
-
-@app.command()
-def outline(
-    novel_id: str = typer.Option(..., "--id", "-i", help="小说ID"),
-    theme: str = typer.Option(..., "--theme", help="故事主题")
-):
-    """为小说创建大纲"""
-    console.print(Panel(f"[bold cyan]创建大纲[/bold cyan]"))
-    console.print(f"小说ID: [yellow]{novel_id}[/yellow]")
-    console.print(f"主题: [yellow]{theme}[/yellow]")
-
-    # TODO: 调用OutlineAgent生成大纲
-    console.print("\n[yellow]功能开发中...[/yellow]")
-    console.print("该功能将在Phase 2完成")
 
 
 @app.command()
@@ -774,32 +764,33 @@ def write(
                         if not user_input:
                             continue
 
-                        # 规则路由
-                        action = dialogue_agent.fast_route(user_input)
-                        if action:
-                            console.print(f"[dim]→ {action['reason']}，执行中...[/dim]")
-                            exec_context["novel"] = novel
-                            exec_result = await _exec_with_stream(dialogue_agent, action, exec_context)
-                            if exec_result.get("status") == "success":
-                                console.print(f"[green]✓ {exec_result.get('message', '操作完成')}[/green]\n")
-                                novel = file_manager.load_novel_json(novel_id)
-                                current_ch = novel.get_chapter(chapter) if novel else None
-                                context["novel"] = novel
-                                if current_ch:
-                                    console.print(f"\n[bold]内容预览[/bold] (前200字):")
-                                    console.print(f"[dim]{current_ch.content[:200]}...[/dim]")
-                            else:
-                                console.print(f"[red]✗ {exec_result.get('message', '执行失败')}[/red]\n")
+                        # 规则路由（fast_route 可能返回多个 action）
+                        fast_actions = dialogue_agent.fast_route(user_input)
+                        if fast_actions:
+                            for fa in fast_actions:
+                                console.print(f"[dim]→ {fa['reason']}，执行中...[/dim]")
+                                exec_context["novel"] = novel
+                                exec_result = await _exec_with_stream(dialogue_agent, fa, exec_context)
+                                if exec_result.get("status") == "success":
+                                    console.print(f"[green]✓ {exec_result.get('message', '操作完成')}[/green]\n")
+                                    novel = file_manager.load_novel_json(novel_id)
+                                    current_ch = novel.get_chapter(chapter) if novel else None
+                                    context["novel"] = novel
+                                    if current_ch:
+                                        console.print(f"\n[bold]内容预览[/bold] (前200字):")
+                                        console.print(f"[dim]{current_ch.content[:200]}...[/dim]")
+                                else:
+                                    console.print(f"[red]✗ {exec_result.get('message', '执行失败')}[/red]\n")
+                                    break
                         else:
                             with console.status("[bold green]正在思考..."):
                                 chat_result = await dialogue_agent.chat(user_input, context)
                             if chat_result["status"] == "success":
                                 console.print(f"\n[bold green]助手[/bold green]: {chat_result['response']}\n")
-                                if chat_result.get("action"):
-                                    action = chat_result["action"]
-                                    console.print(f"[dim]→ {_TOOL_LABELS.get(action['tool'], action.get('reason', action['tool']))}...[/dim]")
+                                for act in chat_result.get("actions") or []:
+                                    console.print(f"[dim]→ {_TOOL_LABELS.get(act['tool'], act.get('reason', act['tool']))}...[/dim]")
                                     exec_context["novel"] = novel
-                                    exec_result = await _exec_with_stream(dialogue_agent, action, exec_context)
+                                    exec_result = await _exec_with_stream(dialogue_agent, act, exec_context)
                                     if exec_result.get("status") == "success":
                                         console.print(f"[green]✓ {exec_result.get('message', '操作完成')}[/green]\n")
                                         novel = file_manager.load_novel_json(novel_id)
@@ -810,6 +801,7 @@ def write(
                                             console.print(f"[dim]{current_ch.content[:200]}...[/dim]")
                                     else:
                                         console.print(f"[red]✗ {exec_result.get('message', '执行失败')}[/red]\n")
+                                        break
                             else:
                                 console.print(f"[red]错误: {chat_result.get('message', '未知错误')}[/red]")
 
@@ -934,63 +926,59 @@ def write_all(
             total=len(to_write)
         )
 
-        chapters_completed = []
-        total_words = 0
-        failed = False
+        async def _write_all_chapters():
+            chapters_completed = []
+            total_words = 0
 
-        for cp in to_write:
-            ch_num = cp.chapter_number
-            chars = [0]  # 用列表在闭包里计数
+            for cp in to_write:
+                ch_num = cp.chapter_number
+                chars = [0]  # 用列表在闭包里计数
 
-            def make_on_token(n, c):
-                def on_token(token: str):
-                    c[0] += len(token)
-                    progress.update(
-                        task,
-                        description=f"[cyan]第{n}章[/cyan]  [dim]已生成 {c[0]} 字[/dim]"
-                    )
-                return on_token
+                def make_on_token(n, c):
+                    def on_token(token: str):
+                        c[0] += len(token)
+                        progress.update(
+                            task,
+                            description=f"[cyan]第{n}章[/cyan]  [dim]已生成 {c[0]} 字[/dim]"
+                        )
+                    return on_token
 
-            _on_token = make_on_token(ch_num, chars)
-            _holder = {}
-
-            async def _do(chapter_num=ch_num, tok=_on_token):
-                _holder["r"] = await coordinator.write_chapter_workflow(
+                result = await coordinator.write_chapter_workflow(
                     novel_id=novel_id,
-                    chapter_number=chapter_num,
+                    chapter_number=ch_num,
                     enable_expansion=expand,
                     force=force,
-                    on_token=tok
+                    on_token=make_on_token(ch_num, chars)
                 )
 
-            asyncio.run(_do())
-            result = _holder.get("r", {"status": "error", "message": "未知错误"})
-
-            if result["status"] == "success":
-                ch_obj = result["chapter"]
-                chapters_completed.append({
-                    "number": ch_obj.number,
-                    "title": ch_obj.title,
-                    "word_count": ch_obj.word_count
-                })
-                total_words += ch_obj.word_count
-                progress.advance(task)
-                progress.print(
-                    f"  [green]✓[/green] 第{ch_num}章完成: {ch_obj.title} ({ch_obj.word_count}字)"
-                )
-                # 更新下一章的描述
-                next_chapters = [c for c in to_write if c.chapter_number > ch_num]
-                if next_chapters:
-                    progress.update(
-                        task,
-                        description=f"[cyan]第{next_chapters[0].chapter_number}章[/cyan]"
+                if result["status"] == "success":
+                    ch_obj = result["chapter"]
+                    chapters_completed.append({
+                        "number": ch_obj.number,
+                        "title": ch_obj.title,
+                        "word_count": ch_obj.word_count
+                    })
+                    total_words += ch_obj.word_count
+                    progress.advance(task)
+                    progress.print(
+                        f"  [green]✓[/green] 第{ch_num}章完成: {ch_obj.title} ({ch_obj.word_count}字)"
                     )
-            else:
-                progress.print(
-                    f"  [red]✗[/red] 第{ch_num}章写作失败: {result.get('message', '未知错误')}"
-                )
-                failed = True
-                break
+                    # 更新下一章的描述
+                    next_chapters = [c for c in to_write if c.chapter_number > ch_num]
+                    if next_chapters:
+                        progress.update(
+                            task,
+                            description=f"[cyan]第{next_chapters[0].chapter_number}章[/cyan]"
+                        )
+                else:
+                    progress.print(
+                        f"  [red]✗[/red] 第{ch_num}章写作失败: {result.get('message', '未知错误')}"
+                    )
+                    return chapters_completed, total_words, True
+
+            return chapters_completed, total_words, False
+
+        chapters_completed, total_words, failed = asyncio.run(_write_all_chapters())
 
     result = {
         "status": "error" if failed else "success",
@@ -1066,34 +1054,36 @@ def write_all(
                         if not user_input:
                             continue
 
-                        # 规则路由
-                        action = dialogue_agent.fast_route(user_input)
-                        if action:
-                            console.print(f"[dim]→ {action['reason']}，执行中...[/dim]")
-                            exec_context["novel"] = novel
-                            exec_result = await _exec_with_stream(dialogue_agent, action, exec_context)
-                            if exec_result.get("status") == "success":
-                                console.print(f"[green]✓ {exec_result.get('message', '操作完成')}[/green]\n")
-                                novel = file_manager.load_novel_json(novel_id)
-                                context["novel"] = novel
-                            else:
-                                console.print(f"[red]✗ {exec_result.get('message', '执行失败')}[/red]\n")
+                        # 规则路由（fast_route 可能返回多个 action）
+                        fast_actions = dialogue_agent.fast_route(user_input)
+                        if fast_actions:
+                            for fa in fast_actions:
+                                console.print(f"[dim]→ {fa['reason']}，执行中...[/dim]")
+                                exec_context["novel"] = novel
+                                exec_result = await _exec_with_stream(dialogue_agent, fa, exec_context)
+                                if exec_result.get("status") == "success":
+                                    console.print(f"[green]✓ {exec_result.get('message', '操作完成')}[/green]\n")
+                                    novel = file_manager.load_novel_json(novel_id)
+                                    context["novel"] = novel
+                                else:
+                                    console.print(f"[red]✗ {exec_result.get('message', '执行失败')}[/red]\n")
+                                    break
                         else:
                             with console.status("[bold green]正在思考..."):
                                 chat_result = await dialogue_agent.chat(user_input, context)
                             if chat_result["status"] == "success":
                                 console.print(f"\n[bold green]助手[/bold green]: {chat_result['response']}\n")
-                                if chat_result.get("action"):
-                                    action = chat_result["action"]
-                                    console.print(f"[dim]→ {_TOOL_LABELS.get(action['tool'], action.get('reason', action['tool']))}...[/dim]")
+                                for act in chat_result.get("actions") or []:
+                                    console.print(f"[dim]→ {_TOOL_LABELS.get(act['tool'], act.get('reason', act['tool']))}...[/dim]")
                                     exec_context["novel"] = novel
-                                    exec_result = await _exec_with_stream(dialogue_agent, action, exec_context)
+                                    exec_result = await _exec_with_stream(dialogue_agent, act, exec_context)
                                     if exec_result.get("status") == "success":
                                         console.print(f"[green]✓ {exec_result.get('message', '操作完成')}[/green]\n")
                                         novel = file_manager.load_novel_json(novel_id)
                                         context["novel"] = novel
                                     else:
                                         console.print(f"[red]✗ {exec_result.get('message', '执行失败')}[/red]\n")
+                                        break
                             else:
                                 console.print(f"[red]错误: {chat_result.get('message', '未知错误')}[/red]")
 
